@@ -30,10 +30,10 @@ import {
 import { useTimedReset } from "@app/hooks";
 import {
   GatewayAuthMethodView,
-  GatewayHealthCheckStatus,
   TGatewayV2,
   TGatewayV2WithAuthMethod
 } from "@app/hooks/api/gateways-v2/types";
+import { isGatewayHealthy } from "@app/hooks/api/gateways-v2/utils";
 
 import { GatewayAuthMethodModal } from "../GatewayAuthMethod/GatewayAuthMethodModal";
 import { ViewGatewayAuth } from "../GatewayAuthMethod/ViewGatewayAuth";
@@ -42,7 +42,7 @@ const HealthBadge = ({ gateway }: { gateway: TGatewayV2 }) => {
   if (!gateway.heartbeat && !gateway.lastHealthCheckStatus) {
     return <Badge variant="warning">Unregistered</Badge>;
   }
-  if (gateway.lastHealthCheckStatus === GatewayHealthCheckStatus.Healthy) {
+  if (isGatewayHealthy(gateway.heartbeat, gateway.lastHealthCheckStatus)) {
     return <Badge variant="success">Healthy</Badge>;
   }
   return <Badge variant="danger">Unreachable</Badge>;
