@@ -211,6 +211,7 @@ import {
 } from "../SecretDashboardPage/SecretMainPage.store";
 import { AddResourceButtons } from "./components/AddResourceButtons/AddResourceButtons";
 import { CreateSecretForm } from "./components/CreateSecretForm";
+import { FirstSecretsBanner } from "./components/FirstSecretsBanner";
 import { ImportSecretsModal, SecretDropzone } from "./components/SecretDropzone";
 import { SecretV2MigrationSection } from "./components/SecretV2MigrationSection";
 import { SelectionPanel } from "./components/SelectionPanel/SelectionPanel";
@@ -2421,6 +2422,19 @@ const OverviewPageContent = () => {
     return "table" as const;
   })();
 
+  const isViewingAllEnvs = visibleEnvs.length === userAvailableEnvs.length;
+
+  useEffect(() => {
+    if (
+      tableView === "add-first-secret" &&
+      secretPath === "/" &&
+      isViewingAllEnvs &&
+      !searchFilter
+    ) {
+      localStorage.setItem(`first-secrets-seen-empty-${projectId}`, "true");
+    }
+  }, [tableView, secretPath, projectId, isViewingAllEnvs, searchFilter]);
+
   if (!isProjectV3)
     return (
       <div className="flex h-full w-full flex-col items-center justify-center px-6 text-mineshaft-50 dark:scheme-dark">
@@ -2743,6 +2757,7 @@ const OverviewPageContent = () => {
             )}
             {tableView === "table" && (
               <>
+                <FirstSecretsBanner projectId={projectId} orgId={orgId} secretPath={secretPath} />
                 <DragDropProvider onDragEnd={handleSecretImportReorder}>
                   <Table ref={tableRef} className="border-separate border-spacing-0">
                     <TableHeader>
