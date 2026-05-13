@@ -1784,6 +1784,7 @@ export const registerRoutes = async (
     reminderService,
     secretVersionV2DAL: secretVersionV2BridgeDAL,
     secretV2BridgeDAL,
+    kmsService,
     userGroupMembershipDAL,
     identityGroupMembershipDAL
   });
