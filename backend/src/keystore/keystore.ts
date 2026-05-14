@@ -129,7 +129,11 @@ export const KeyStorePrefixes = {
 
   TelemetryEvent: (event: string, bucketId: string, distinctId: string, uuid: string) =>
     `telemetry-event-${event}-${bucketId}-${distinctId}-${uuid}` as const,
-  TelemetryEventByBucketPattern: (event: string, bucketId: string) => `telemetry-event-${event}-${bucketId}-*` as const
+  TelemetryEventByBucketPattern: (event: string, bucketId: string) => `telemetry-event-${event}-${bucketId}-*` as const,
+
+  AuditLogStreamFailureBucket: (streamId: string, minuteBucket: number) =>
+    `audit-log-stream:${streamId}:failures:${minuteBucket}` as const,
+  AuditLogStreamAlertSent: (streamId: string) => `audit-log-stream:${streamId}:alert-sent` as const
 };
 
 export const KeyStoreTtls = {
@@ -202,6 +206,7 @@ export type TKeyStoreFactory = {
   deleteItemsByKeyIn: (keys: string[]) => Promise<number>;
   deleteItems: (arg: TDeleteItems) => Promise<number>;
   incrementBy: (key: string, value: number) => Promise<number>;
+  incrementByWithExpiry: (key: string, value: number, expiryInSeconds: number) => Promise<number>;
   getKeysByPattern: (pattern: string, limit?: number) => Promise<string[]>;
   // list operations
   listPush: (key: string, value: string) => Promise<number>;
@@ -325,6 +330,22 @@ export const keyStoreFactory = (
   };
 
   const incrementBy = async (key: string, value: number) => primaryRedis.incrby(key, value);
+
+  // Atomically increment key and set TTL on first write (Lua ensures INCRBY + EXPIRE are one operation).
+  const incrementByWithExpiry = async (key: string, value: number, expiryInSeconds: number): Promise<number> => {
+    const result = await primaryRedis.eval(
+      `local v = redis.call('INCRBY', KEYS[1], ARGV[1])
+      if redis.call('TTL', KEYS[1]) == -1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[2])
+      end
+      return v`,
+      1,
+      key,
+      String(value),
+      String(expiryInSeconds)
+    );
+    return result as number;
+  };
 
   const setExpiry = async (key: string, expiryInSeconds: number) => primaryRedis.expire(key, expiryInSeconds);
 
@@ -455,6 +476,7 @@ export const keyStoreFactory = (
     deleteItem,
     deleteItems,
     incrementBy,
+    incrementByWithExpiry,
     acquireLock(resources: string[], duration: number, settings?: Partial<Settings>) {
       return redisLock.acquire(resources, duration, settings);
     },
