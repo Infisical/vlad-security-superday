@@ -9,6 +9,11 @@ export enum ApproverType {
   User = "user"
 }
 
+export enum EnforcementLevel {
+  Hard = "hard",
+  Soft = "soft"
+}
+
 export type ApprovalPolicyStep = {
   name?: string | null;
   requiredApprovals: number;
@@ -17,6 +22,11 @@ export type ApprovalPolicyStep = {
     type: ApproverType;
     id: string;
   }[];
+};
+
+export type PolicyBypasser = {
+  type: ApproverType;
+  id: string;
 };
 
 export type PamAccessPolicyConditions = {
@@ -66,6 +76,8 @@ export type TApprovalPolicy = {
   };
   steps: ApprovalPolicyStep[];
   bypassForMachineIdentities?: boolean;
+  enforcementLevel: EnforcementLevel;
+  bypassers: PolicyBypasser[];
   createdAt: string;
   updatedAt: string;
 };
@@ -82,6 +94,8 @@ export type TCreateApprovalPolicyDTO = {
     | CodeSigningPolicyConstraints;
   steps: ApprovalPolicyStep[];
   bypassForMachineIdentities?: boolean;
+  enforcementLevel?: EnforcementLevel;
+  bypassers?: PolicyBypasser[];
 };
 
 export type TUpdateApprovalPolicyDTO = {
@@ -99,6 +113,8 @@ export type TUpdateApprovalPolicyDTO = {
     | CodeSigningPolicyConstraints;
   steps?: ApprovalPolicyStep[];
   bypassForMachineIdentities?: boolean;
+  enforcementLevel?: EnforcementLevel;
+  bypassers?: PolicyBypasser[];
 };
 
 export type TGetApprovalPolicyByIdDTO = {

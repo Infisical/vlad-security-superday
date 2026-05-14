@@ -424,7 +424,8 @@ export const registerApprovalPolicyEndpoints = ({
         requestId: z.string().uuid()
       }),
       body: z.object({
-        comment: z.string().optional()
+        comment: z.string().optional(),
+        bypassReason: z.string().min(10).max(1000).optional()
       }),
       response: {
         200: z.object({
@@ -434,25 +435,44 @@ export const registerApprovalPolicyEndpoints = ({
     },
     onRequest: verifyAuth([AuthMode.JWT]),
     handler: async (req) => {
-      const { request } = await server.services.approvalPolicy.approveRequest(
+      const { request, audit, bypassMetadata } = await server.services.approvalPolicy.approveRequest(
         req.params.requestId,
         req.body,
-        req.permission
+        req.permission,
+        policyType
       );
 
-      await server.services.auditLog.createAuditLog({
-        ...req.auditLogInfo,
-        orgId: req.permission.orgId,
-        projectId: request.projectId,
-        event: {
-          type: EventType.APPROVAL_REQUEST_APPROVE,
-          metadata: {
-            policyType,
-            requestId: req.params.requestId,
-            comment: req.body.comment
+      if (audit === "standard") {
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          orgId: req.permission.orgId,
+          projectId: request.projectId,
+          event: {
+            type: EventType.APPROVAL_REQUEST_APPROVE,
+            metadata: {
+              policyType,
+              requestId: req.params.requestId,
+              comment: req.body.comment
+            }
           }
-        }
-      });
+        });
+      } else if (audit === "break-glass" && bypassMetadata) {
+        await server.services.auditLog.createAuditLog({
+          ...req.auditLogInfo,
+          orgId: req.permission.orgId,
+          projectId: request.projectId,
+          event: {
+            type: EventType.PAM_ACCESS_POLICY_BYPASSED,
+            metadata: {
+              policyType,
+              policyId: request.policyId ?? null,
+              requestId: request.id,
+              granteeUserId: req.permission.id,
+              ...bypassMetadata
+            }
+          }
+        });
+      }
 
       return { request };
     }
