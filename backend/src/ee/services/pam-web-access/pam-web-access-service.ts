@@ -30,6 +30,7 @@ import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { TMfaSessionServiceFactory } from "@app/services/mfa-session/mfa-session-service";
 import { MfaSessionStatus } from "@app/services/mfa-session/mfa-session-types";
 import { TOrgDALFactory } from "@app/services/org/org-dal";
+import { TPamSessionAiSummaryServiceFactory } from "@app/ee/services/pam-session/pam-session-ai-summary-queue";
 import { TPamSessionExpirationServiceFactory } from "@app/services/pam-session-expiration/pam-session-expiration-queue";
 import { TProjectDALFactory } from "@app/services/project/project-dal";
 import { TUserDALFactory } from "@app/services/user/user-dal";
@@ -75,8 +76,12 @@ type TPamWebAccessServiceFactoryDep = {
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
   tokenService: Pick<TAuthTokenServiceFactory, "createTokenForUser">;
-  pamSessionDAL: Pick<TPamSessionDALFactory, "create" | "updateById" | "countActiveWebSessions">;
+  pamSessionDAL: Pick<
+    TPamSessionDALFactory,
+    "create" | "updateById" | "countActiveWebSessions" | "endSessionById" | "expireOverdueSessions"
+  >;
   pamSessionExpirationService: Pick<TPamSessionExpirationServiceFactory, "scheduleSessionExpiration">;
+  pamSessionAiSummaryService: Pick<TPamSessionAiSummaryServiceFactory, "queueAiSummary">;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPAMConnectionDetails">;
   gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
@@ -117,6 +122,7 @@ export const pamWebAccessServiceFactory = ({
   tokenService,
   pamSessionDAL,
   pamSessionExpirationService,
+  pamSessionAiSummaryService,
   gatewayV2Service,
   gatewayPoolService,
   kmsService,
@@ -418,6 +424,37 @@ export const pamWebAccessServiceFactory = ({
         }
       }
 
+      // Mark session as ended AFTER resources are freed so the session slot
+      // doesn't reopen while pg connections / relay tunnel are still alive.
+      // endSessionById is a no-op if the session is already ended.
+      if (session) {
+        const sessionId = session.id;
+        try {
+          const updated = await pamSessionDAL.endSessionById(sessionId);
+          if (updated) {
+            // Fire the same side effects the service-layer endSessionById would
+            // have produced, so the ALPN signal path doesn't need to duplicate them.
+            void pamSessionAiSummaryService.queueAiSummary(sessionId, projectId).catch((err) => {
+              logger.debug(err, `Failed to queue AI summary [sessionId=${sessionId}]`);
+            });
+            await auditLogService.createAuditLog({
+              ...auditLogInfo,
+              orgId,
+              projectId,
+              event: {
+                type: EventType.PAM_SESSION_END,
+                metadata: {
+                  sessionId,
+                  accountName
+                }
+              }
+            });
+          }
+        } catch (err) {
+          logger.error(err, `Failed to end session in DB [sessionId=${sessionId}]`);
+        }
+      }
+
       // Best-effort ALPN session cancellation (fire-and-forget).
       // Triggers gateway-side cleanup: log upload, and session end via API.
       // If this fails, the scheduled queue job will expire the session at expiresAt time.
@@ -476,6 +513,16 @@ export const pamWebAccessServiceFactory = ({
       });
       if (!effectiveGatewayId) {
         throw new BadRequestError({ message: "Gateway not configured for this resource" });
+      }
+
+      // Expire any of this user's sessions that have outlived their expiresAt
+      // but are still marked active (e.g. process crash, lost BullMQ job).
+      // Done right before the cap check so stale sessions don't lock the user out.
+      const expiredSessions = await pamSessionDAL.expireOverdueSessions(userId, projectId);
+      for (const expired of expiredSessions) {
+        void pamSessionAiSummaryService.queueAiSummary(expired.id, expired.projectId).catch((err) => {
+          logger.debug(err, `Failed to queue AI summary for expired session [sessionId=${expired.id}]`);
+        });
       }
 
       // Check web session limit
