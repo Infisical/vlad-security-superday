@@ -29,6 +29,12 @@ import {
   TDynamicSecretLeaseServiceFactory
 } from "./dynamic-secret-lease-types";
 
+// Exported for testing. Strips every character not safe for use as a database
+// identifier (letters, digits, underscore, hyphen) and caps at 63 chars
+// (PostgreSQL's max identifier length).
+export const toSafeUsername = (raw: string): string =>
+  raw.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 63) || "inf_user";
+
 type TDynamicSecretLeaseServiceFactoryDep = {
   dynamicSecretLeaseDAL: TDynamicSecretLeaseDALFactory;
   dynamicSecretDAL: Pick<TDynamicSecretDALFactory, "findOne">;
@@ -137,13 +143,6 @@ export const dynamicSecretLeaseServiceFactory = ({
       const maxExpiryDate = new Date(new Date().getTime() + ms(maxTTL));
       if (expireAt > maxExpiryDate) throw new BadRequestError({ message: "TTL cannot be larger than max TTL" });
     }
-
-    // Restrict identity names to characters safe for use as database usernames.
-    // Identity names are free-text and may contain SQL metacharacters (;, --, ', etc.).
-    // Applying this before passing to any provider closes the injection path regardless
-    // of how each provider constructs its creation statement.
-    const toSafeUsername = (raw: string): string =>
-      raw.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 63) || "inf_user";
 
     let result;
     try {
