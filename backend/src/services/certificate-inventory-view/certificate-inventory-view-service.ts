@@ -111,10 +111,17 @@ export const certificateInventoryViewServiceFactory = ({
     return permission;
   };
 
-  const listViews = async ({ projectId, actor, actorId, actorOrgId, actorAuthMethod }: TListInventoryViewsDTO) => {
+  const listViews = async ({
+    projectId,
+    applicationId,
+    actor,
+    actorId,
+    actorOrgId,
+    actorAuthMethod
+  }: TListInventoryViewsDTO) => {
     await checkProjectPermission({ projectId, actor, actorId, actorOrgId, actorAuthMethod });
 
-    const allViews = await certificateInventoryViewDAL.findByProjectId(projectId, actorId);
+    const allViews = await certificateInventoryViewDAL.findByProjectId(projectId, actorId, applicationId);
 
     const sharedViews = allViews.filter((v) => v.isShared);
     const customViews = allViews.filter((v) => !v.isShared);
@@ -136,6 +143,7 @@ export const certificateInventoryViewServiceFactory = ({
 
   const createView = async ({
     projectId,
+    applicationId,
     name,
     filters,
     columns,
@@ -150,9 +158,16 @@ export const certificateInventoryViewServiceFactory = ({
       ProjectPermissionActions.Create
     );
 
+    if (applicationId && filters?.applicationIds?.length) {
+      throw new BadRequestError({
+        message: "Application filter is only available on project-wide inventory views."
+      });
+    }
+
     try {
       const view = await certificateInventoryViewDAL.create({
         projectId,
+        applicationId: applicationId ?? null,
         name,
         filters: JSON.stringify(filters),
         columns: columns ? JSON.stringify(columns) : undefined,
@@ -197,6 +212,12 @@ export const certificateInventoryViewServiceFactory = ({
 
     if (existing.createdByUserId !== actorId) {
       throw new BadRequestError({ message: "You can only update your own views" });
+    }
+
+    if (existing.applicationId && filters?.applicationIds?.length) {
+      throw new BadRequestError({
+        message: "Application filter is only available on project-wide inventory views."
+      });
     }
 
     try {

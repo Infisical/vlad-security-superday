@@ -761,6 +761,26 @@ export const projectServiceFactory = ({
       });
     }
 
+    if (project.type === ProjectType.CertificateManager) {
+      const certManagerProjects = await projectDAL.find({
+        orgId: project.orgId,
+        type: ProjectType.CertificateManager
+      });
+      if (certManagerProjects.length <= 1) {
+        throw new BadRequestError({
+          message:
+            "Cannot delete the last Certificate Manager project in this organization. Create another Certificate Manager project first."
+        });
+      }
+      const org = await orgDAL.findOne({ id: project.orgId });
+      if (org?.defaultCertManagerProjectId === project.id) {
+        throw new BadRequestError({
+          message:
+            "Cannot delete the active Certificate Manager project. Set another project as active in Organization Settings → Certificate Manager first."
+        });
+      }
+    }
+
     let lock: Awaited<ReturnType<typeof keyStore.acquireLock>> | undefined;
     try {
       lock = await keyStore.acquireLock([KeyStorePrefixes.ProjectDeleteLock(project.id)], 30_000, {
@@ -1251,6 +1271,8 @@ export const projectServiceFactory = ({
     notAfterTo,
     notBeforeFrom,
     notBeforeTo,
+    applicationId,
+    applicationIds,
     sortBy,
     sortOrder,
     actorId,
@@ -1298,7 +1320,9 @@ export const projectServiceFactory = ({
       ...(notAfterFrom && { notAfterFrom }),
       ...(notAfterTo && { notAfterTo }),
       ...(notBeforeFrom && { notBeforeFrom }),
-      ...(notBeforeTo && { notBeforeTo })
+      ...(notBeforeTo && { notBeforeTo }),
+      ...(applicationId && { applicationId }),
+      ...(applicationIds && applicationIds.length > 0 && { applicationIds })
     };
     const permissionFilters = getProcessedPermissionRules(
       permission,
@@ -1350,7 +1374,9 @@ export const projectServiceFactory = ({
       ...(regularFilters.notAfterFrom && { notAfterFrom: regularFilters.notAfterFrom }),
       ...(regularFilters.notAfterTo && { notAfterTo: regularFilters.notAfterTo }),
       ...(regularFilters.notBeforeFrom && { notBeforeFrom: regularFilters.notBeforeFrom }),
-      ...(regularFilters.notBeforeTo && { notBeforeTo: regularFilters.notBeforeTo })
+      ...(regularFilters.notBeforeTo && { notBeforeTo: regularFilters.notBeforeTo }),
+      ...(regularFilters.applicationId && { applicationId: regularFilters.applicationId }),
+      ...(regularFilters.applicationIds && { applicationIds: regularFilters.applicationIds })
     };
 
     const count = forPkiSync
@@ -2435,6 +2461,12 @@ export const projectServiceFactory = ({
 
     const callbackPath = `/organizations/${project.orgId}/projects/${projectTypeUrl}/${project.id}/access-management?selectedTab=members&requesterEmail=${userDetails.email}`;
 
+    const productLabel = project.type === ProjectType.CertificateManager ? "Certificate Manager" : null;
+    const notificationTitle = productLabel ? `${productLabel} Access Request` : "Project Access Request";
+    const notificationBody = productLabel
+      ? `**${userDetails.firstName} ${userDetails.lastName}** (${userDetails.email}) has requested access to **${productLabel}**.`
+      : `**${userDetails.firstName} ${userDetails.lastName}** (${userDetails.email}) has requested access to the project **${project.name}**.`;
+
     await notificationService.createUserNotifications(
       projectMembers
         .filter((member) => member.roles.some((role) => role.role === ProjectMembershipRole.Admin))
@@ -2442,8 +2474,8 @@ export const projectServiceFactory = ({
           userId: member.userId,
           orgId: project.orgId,
           type: NotificationType.PROJECT_ACCESS_REQUEST,
-          title: "Project Access Request",
-          body: `**${userDetails.firstName} ${userDetails.lastName}** (${userDetails.email}) has requested access to the project **${project.name}**.`,
+          title: notificationTitle,
+          body: notificationBody,
           link: callbackPath
         }))
     );
@@ -2451,14 +2483,15 @@ export const projectServiceFactory = ({
     await smtpService.sendMail({
       template: SmtpTemplates.ProjectAccessRequest,
       recipients: filteredProjectMembers,
-      subjectLine: "Project Access Request",
+      subjectLine: notificationTitle,
       substitutions: {
         requesterName: `${userDetails.firstName} ${userDetails.lastName}`,
         requesterEmail: userDetails.email,
         projectName: project?.name,
         orgName: org?.name,
         note: comment,
-        callback_url: `${appCfg.SITE_URL}${callbackPath}`
+        callback_url: `${appCfg.SITE_URL}${callbackPath}`,
+        ...(productLabel ? { productLabel } : {})
       }
     });
   };

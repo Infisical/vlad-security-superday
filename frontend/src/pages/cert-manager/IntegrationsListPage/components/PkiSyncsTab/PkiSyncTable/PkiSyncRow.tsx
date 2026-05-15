@@ -32,17 +32,19 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  IconButton,
-  Td,
-  Tooltip,
-  Tr
+  Tooltip
 } from "@app/components/v2";
-import { Badge } from "@app/components/v3";
+import { Badge, IconButton, TableCell, TableRow } from "@app/components/v3";
 import { ROUTE_PATHS } from "@app/const/routes";
 import { ProjectPermissionSub, useOrganization } from "@app/context";
 import { ProjectPermissionPkiSyncActions } from "@app/context/ProjectPermissionContext/types";
 import { PKI_SYNC_MAP } from "@app/helpers/pkiSyncs";
 import { useToggle } from "@app/hooks";
+import {
+  PkiApplicationResourceActions,
+  PkiApplicationResourceSub,
+  useGetPkiApplicationPermissions
+} from "@app/hooks/api/pkiApplications";
 import { PkiSyncStatus, TPkiSync, usePkiSyncOption } from "@app/hooks/api/pkiSyncs";
 
 import { PkiSyncDestinationCol } from "./PkiSyncDestinationCol";
@@ -54,6 +56,7 @@ type Props = {
   onTriggerImportCertificates: (pkiSync: TPkiSync) => void;
   onTriggerRemoveCertificates: (pkiSync: TPkiSync) => void;
   onToggleEnable: (pkiSync: TPkiSync) => void;
+  applicationName?: string;
 };
 
 export const PkiSyncRow = ({
@@ -62,7 +65,8 @@ export const PkiSyncRow = ({
   onTriggerSyncCertificates,
   onTriggerImportCertificates,
   onTriggerRemoveCertificates,
-  onToggleEnable
+  onToggleEnable,
+  applicationName
 }: Props) => {
   const navigate = useNavigate();
   const {
@@ -74,7 +78,8 @@ export const PkiSyncRow = ({
     description,
     syncStatus,
     isAutoSyncEnabled,
-    projectId
+    projectId,
+    applicationId
   } = pkiSync;
 
   const destinationName = PKI_SYNC_MAP[destination].name;
@@ -83,6 +88,14 @@ export const PkiSyncRow = ({
 
   const { currentOrg } = useOrganization();
   const [isIdCopied, setIsIdCopied] = useToggle(false);
+
+  const { data: appPermissionData } = useGetPkiApplicationPermissions(applicationId ?? "");
+  const canDeleteAppSync = Boolean(
+    appPermissionData?.permission?.can(
+      PkiApplicationResourceActions.Delete,
+      PkiApplicationResourceSub.PkiSyncs
+    )
+  );
 
   const handleCopyId = useCallback(() => {
     setIsIdCopied.on();
@@ -124,36 +137,36 @@ export const PkiSyncRow = ({
     <ProjectPermissionCan I={ProjectPermissionPkiSyncActions.Read} a={permissionSubject}>
       {(isAllowed: boolean) => {
         return (
-          <Tr
+          <TableRow
             onClick={() => {
               if (!isAllowed) {
                 return;
               }
-              // console.log("PKI Sync navigation:", { syncId: id, projectId });
               navigate({
                 to: ROUTE_PATHS.CertManager.PkiSyncDetailsByIDPage.path,
                 params: {
                   syncId: id,
                   projectId,
                   orgId: currentOrg.id
-                }
+                },
+                search: applicationName ? { applicationName } : undefined
               });
             }}
             className={twMerge(
-              "group h-10 transition-colors duration-100 hover:bg-mineshaft-700",
+              "group h-14 transition-colors duration-100 hover:bg-mineshaft-700 [&>td]:py-2",
               syncStatus === PkiSyncStatus.Failed && "bg-red/5 hover:bg-red/10",
               isAllowed ? "cursor-pointer" : "cursor-not-allowed"
             )}
             key={`sync-${id}`}
           >
-            <Td>
+            <TableCell>
               <img
                 alt={`${destinationDetails.name} sync`}
                 src={`/images/integrations/${destinationDetails.image}`}
                 className="min-w-7"
               />
-            </Td>
-            <Td className="max-w-0 min-w-32!">
+            </TableCell>
+            <TableCell className="max-w-0 min-w-32!">
               <div>
                 <div className="flex w-full items-center">
                   <p className="truncate">{name}</p>
@@ -166,16 +179,21 @@ export const PkiSyncRow = ({
                       />
                     </Tooltip>
                   )}
+                  {!applicationId && (
+                    <span className="ml-2 rounded bg-mineshaft-600 px-2 py-0.5 text-[10px] tracking-wide text-mineshaft-200 uppercase">
+                      Legacy
+                    </span>
+                  )}
                 </div>
                 <p className="truncate text-xs leading-4 text-bunker-300">
                   {destinationDetails.name}
                 </p>
               </div>
-            </Td>
+            </TableCell>
             <PkiSyncDestinationCol pkiSync={pkiSync} />
-            <Td>
+            <TableCell>
               <div className="flex items-center gap-1">
-                {syncStatus && (
+                {syncStatus ? (
                   <Tooltip
                     position="left"
                     className="max-w-sm"
@@ -220,6 +238,13 @@ export const PkiSyncRow = ({
                       <PkiSyncStatusBadge status={syncStatus} />
                     </div>
                   </Tooltip>
+                ) : (
+                  <Tooltip
+                    className="text-xs"
+                    content="This sync has not run yet — no certificates have been pushed to the destination."
+                  >
+                    <Badge variant="neutral">Not Synced</Badge>
+                  </Tooltip>
                 )}
                 {!isAutoSyncEnabled && (
                   <Tooltip
@@ -228,7 +253,7 @@ export const PkiSyncRow = ({
                   >
                     <Badge variant="neutral">
                       <BanIcon />
-                      {!syncStatus && "Auto-Sync Disabled"}
+                      Auto-Sync Disabled
                     </Badge>
                   </Tooltip>
                 )}
@@ -237,112 +262,75 @@ export const PkiSyncRow = ({
                 )}
                 <PkiSyncRemoveStatusBadge mini pkiSync={pkiSync} />
               </div>
-            </Td>
-            <Td>
-              <Tooltip className="max-w-sm text-center" content="Options">
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <IconButton
-                      ariaLabel="Options"
-                      colorSchema="secondary"
-                      className="w-6"
-                      variant="plain"
-                    >
-                      <FontAwesomeIcon icon={faEllipsisV} />
-                    </IconButton>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent sideOffset={2} align="end">
-                    <DropdownMenuItem
-                      icon={<FontAwesomeIcon icon={isIdCopied ? faCheck : faCopy} />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCopyId();
-                      }}
-                    >
-                      Copy Sync ID
-                    </DropdownMenuItem>
-                    <ProjectPermissionCan
-                      I={ProjectPermissionPkiSyncActions.SyncCertificates}
-                      a={permissionSubject}
-                    >
-                      {(allowed: boolean) => (
-                        <DropdownMenuItem
-                          icon={<FontAwesomeIcon icon={faRotate} />}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onTriggerSyncCertificates(pkiSync);
-                          }}
-                          isDisabled={!allowed}
-                        >
-                          <Tooltip
-                            position="left"
-                            sideOffset={42}
-                            content={`Manually trigger a sync for this ${destinationName} destination.`}
-                          >
-                            <div className="flex h-full w-full items-center justify-between gap-1">
-                              <span> Trigger Sync</span>
-                              <FontAwesomeIcon
-                                className="text-bunker-300"
-                                size="sm"
-                                icon={faInfoCircle}
-                              />
-                            </div>
-                          </Tooltip>
-                        </DropdownMenuItem>
-                      )}
-                    </ProjectPermissionCan>
-                    {syncOption?.canImportCertificates && (
-                      <ProjectPermissionCan
-                        I={ProjectPermissionPkiSyncActions.ImportCertificates}
-                        a={permissionSubject}
+            </TableCell>
+            <TableCell>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <IconButton variant="ghost" size="xs" aria-label="Options">
+                    <FontAwesomeIcon icon={faEllipsisV} />
+                  </IconButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent sideOffset={2} align="end">
+                  <DropdownMenuItem
+                    icon={<FontAwesomeIcon icon={isIdCopied ? faCheck : faCopy} />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCopyId();
+                    }}
+                  >
+                    Copy Sync ID
+                  </DropdownMenuItem>
+                  <ProjectPermissionCan
+                    I={ProjectPermissionPkiSyncActions.SyncCertificates}
+                    a={permissionSubject}
+                  >
+                    {(allowed: boolean) => (
+                      <DropdownMenuItem
+                        icon={<FontAwesomeIcon icon={faRotate} />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTriggerSyncCertificates(pkiSync);
+                        }}
+                        isDisabled={!allowed}
                       >
-                        {(allowed: boolean) => (
-                          <DropdownMenuItem
-                            icon={<FontAwesomeIcon icon={faDownload} />}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onTriggerImportCertificates(pkiSync);
-                            }}
-                            isDisabled={!allowed}
-                          >
-                            <Tooltip
-                              position="left"
-                              sideOffset={42}
-                              content={`Import certificates from this ${destinationName} destination into Infisical.`}
-                            >
-                              <div className="flex h-full w-full items-center justify-between gap-1">
-                                <span>Import Certificates</span>
-                                <FontAwesomeIcon
-                                  className="text-bunker-300"
-                                  size="sm"
-                                  icon={faInfoCircle}
-                                />
-                              </div>
-                            </Tooltip>
-                          </DropdownMenuItem>
-                        )}
-                      </ProjectPermissionCan>
+                        <Tooltip
+                          position="left"
+                          sideOffset={42}
+                          content={`Manually trigger a sync for this ${destinationName} destination.`}
+                        >
+                          <div className="flex h-full w-full items-center justify-between gap-1">
+                            <span> Trigger Sync</span>
+                            <FontAwesomeIcon
+                              className="text-bunker-300"
+                              size="sm"
+                              icon={faInfoCircle}
+                            />
+                          </div>
+                        </Tooltip>
+                      </DropdownMenuItem>
                     )}
+                  </ProjectPermissionCan>
+                  {syncOption?.canImportCertificates && (
                     <ProjectPermissionCan
-                      I={ProjectPermissionPkiSyncActions.RemoveCertificates}
+                      I={ProjectPermissionPkiSyncActions.ImportCertificates}
                       a={permissionSubject}
                     >
                       {(allowed: boolean) => (
                         <DropdownMenuItem
-                          icon={<FontAwesomeIcon icon={faEraser} />}
+                          icon={<FontAwesomeIcon icon={faDownload} />}
                           onClick={(e) => {
                             e.stopPropagation();
-                            onTriggerRemoveCertificates(pkiSync);
+                            onTriggerImportCertificates(pkiSync);
                           }}
                           isDisabled={!allowed}
                         >
                           <Tooltip
                             position="left"
                             sideOffset={42}
-                            content={`Remove certificates synced by Infisical from this ${destinationName} destination.`}
+                            content={`Import certificates from this ${destinationName} destination into Infisical.`}
                           >
                             <div className="flex h-full w-full items-center justify-between gap-1">
-                              <span>Remove Certificates</span>
+                              <span>Import Certificates</span>
                               <FontAwesomeIcon
                                 className="text-bunker-300"
                                 size="sm"
@@ -353,25 +341,69 @@ export const PkiSyncRow = ({
                         </DropdownMenuItem>
                       )}
                     </ProjectPermissionCan>
-                    <ProjectPermissionCan
-                      I={ProjectPermissionPkiSyncActions.Edit}
-                      a={permissionSubject}
-                    >
-                      {(allowed: boolean) => (
-                        <DropdownMenuItem
-                          isDisabled={!allowed}
-                          icon={
-                            <FontAwesomeIcon icon={isAutoSyncEnabled ? faToggleOff : faToggleOn} />
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onToggleEnable(pkiSync);
-                          }}
+                  )}
+                  <ProjectPermissionCan
+                    I={ProjectPermissionPkiSyncActions.RemoveCertificates}
+                    a={permissionSubject}
+                  >
+                    {(allowed: boolean) => (
+                      <DropdownMenuItem
+                        icon={<FontAwesomeIcon icon={faEraser} />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onTriggerRemoveCertificates(pkiSync);
+                        }}
+                        isDisabled={!allowed}
+                      >
+                        <Tooltip
+                          position="left"
+                          sideOffset={42}
+                          content={`Remove certificates synced by Infisical from this ${destinationName} destination.`}
                         >
-                          {isAutoSyncEnabled ? "Disable" : "Enable"} Auto-Sync
-                        </DropdownMenuItem>
-                      )}
-                    </ProjectPermissionCan>
+                          <div className="flex h-full w-full items-center justify-between gap-1">
+                            <span>Remove Certificates</span>
+                            <FontAwesomeIcon
+                              className="text-bunker-300"
+                              size="sm"
+                              icon={faInfoCircle}
+                            />
+                          </div>
+                        </Tooltip>
+                      </DropdownMenuItem>
+                    )}
+                  </ProjectPermissionCan>
+                  <ProjectPermissionCan
+                    I={ProjectPermissionPkiSyncActions.Edit}
+                    a={permissionSubject}
+                  >
+                    {(allowed: boolean) => (
+                      <DropdownMenuItem
+                        isDisabled={!allowed}
+                        icon={
+                          <FontAwesomeIcon icon={isAutoSyncEnabled ? faToggleOff : faToggleOn} />
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleEnable(pkiSync);
+                        }}
+                      >
+                        {isAutoSyncEnabled ? "Disable" : "Enable"} Auto-Sync
+                      </DropdownMenuItem>
+                    )}
+                  </ProjectPermissionCan>
+                  {applicationId ? (
+                    canDeleteAppSync && (
+                      <DropdownMenuItem
+                        icon={<FontAwesomeIcon icon={faTrash} />}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(pkiSync);
+                        }}
+                      >
+                        Delete Sync
+                      </DropdownMenuItem>
+                    )
+                  ) : (
                     <ProjectPermissionCan
                       I={ProjectPermissionPkiSyncActions.Delete}
                       a={permissionSubject}
@@ -389,11 +421,11 @@ export const PkiSyncRow = ({
                         </DropdownMenuItem>
                       )}
                     </ProjectPermissionCan>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </Tooltip>
-            </Td>
-          </Tr>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </TableCell>
+          </TableRow>
         );
       }}
     </ProjectPermissionCan>

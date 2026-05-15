@@ -1,11 +1,15 @@
 import { ForbiddenError, subject } from "@casl/ability";
 
-import { ActionProjectType, TCertificateSyncs } from "@app/db/schemas";
+import { ActionProjectType, ResourceType, TCertificateSyncs } from "@app/db/schemas";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { ProjectPermissionPkiSyncActions, ProjectPermissionSub } from "@app/ee/services/permission/project-permission";
+import {
+  ResourcePermissionPkiSyncActions,
+  ResourcePermissionSub
+} from "@app/ee/services/permission/resource-permission";
 import { getProcessedPermissionRules } from "@app/lib/casl/permission-filter-utils";
-import { BadRequestError, DatabaseError, NotFoundError } from "@app/lib/errors";
+import { BadRequestError, DatabaseError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { OrgServiceActor } from "@app/lib/types";
 import { AppConnection } from "@app/services/app-connection/app-connection-enums";
 import { TAppConnectionServiceFactory } from "@app/services/app-connection/app-connection-service";
@@ -69,7 +73,7 @@ type TPkiSyncServiceFactoryDep = {
   >;
   pkiSubscriberDAL: Pick<TPkiSubscriberDALFactory, "findById">;
   appConnectionService: Pick<TAppConnectionServiceFactory, "connectAppConnectionById">;
-  permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
+  permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getResourcePermission">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
   pkiSyncQueue: Pick<
     TPkiSyncQueueFactory,
@@ -89,7 +93,60 @@ export const pkiSyncServiceFactory = ({
   licenseService,
   pkiSyncQueue
 }: TPkiSyncServiceFactoryDep) => {
-  const validateCertificatesProjectOwnership = async (certificateIds: string[], expectedProjectId: string) => {
+  const $resourceFallback = async (
+    action: ResourcePermissionPkiSyncActions,
+    projectId: string,
+    applicationId: string | null | undefined,
+    actor: OrgServiceActor
+  ) => {
+    if (!applicationId) return false;
+    const { permission } = await permissionService.getResourcePermission({
+      actor: actor.type,
+      actorId: actor.id,
+      projectId,
+      resourceType: ResourceType.CertificateApplication,
+      resourceId: applicationId,
+      actorAuthMethod: actor.authMethod,
+      actorOrgId: actor.orgId
+    });
+    return permission.can(action, ResourcePermissionSub.PkiSyncs);
+  };
+
+  const $assertSyncAction = async (
+    projectAction: ProjectPermissionPkiSyncActions,
+    resourceAction: ResourcePermissionPkiSyncActions,
+    pkiSync: { projectId: string; applicationId?: string | null; name: string },
+    subscriberName: string | undefined,
+    actor: OrgServiceActor
+  ) => {
+    const { permission } = await permissionService.getProjectPermission({
+      actor: actor.type,
+      actorId: actor.id,
+      actorAuthMethod: actor.authMethod,
+      actorOrgId: actor.orgId,
+      actionProjectType: ActionProjectType.CertificateManager,
+      projectId: pkiSync.projectId
+    });
+
+    const projectSubject = subject(ProjectPermissionSub.PkiSyncs, {
+      subscriberName,
+      name: pkiSync.name
+    });
+
+    if (permission.can(projectAction, projectSubject)) return permission;
+
+    const allowedByResource = await $resourceFallback(resourceAction, pkiSync.projectId, pkiSync.applicationId, actor);
+    if (allowedByResource) return permission;
+
+    ForbiddenError.from(permission).throwUnlessCan(projectAction, projectSubject);
+    return permission;
+  };
+
+  const validateCertificatesForSync = async (
+    certificateIds: string[],
+    expectedProjectId: string,
+    expectedApplicationId: string | null | undefined
+  ) => {
     if (certificateIds.length === 0) return;
 
     const certificates = await certificateDAL.findActiveCertificatesByIds(certificateIds);
@@ -107,6 +164,19 @@ export const pkiSyncServiceFactory = ({
       throw new BadRequestError({
         message: `Certificates do not belong to the same project: ${invalidProjectCertificates.map((cert) => cert.id).join(", ")}`
       });
+    }
+
+    if (expectedApplicationId) {
+      const invalidApplicationCertificates = certificates.filter(
+        (cert) => cert.applicationId !== expectedApplicationId
+      );
+      if (invalidApplicationCertificates.length > 0) {
+        throw new BadRequestError({
+          message: `Certificates do not belong to this Application: ${invalidApplicationCertificates
+            .map((cert) => cert.id)
+            .join(", ")}`
+        });
+      }
     }
 
     const invalidRenewedCertificates = certificates.filter((cert) => cert.renewedByCertificateId);
@@ -127,10 +197,18 @@ export const pkiSyncServiceFactory = ({
       subscriberId,
       connectionId,
       projectId,
+      applicationId,
       certificateIds = []
     }: Omit<TCreatePkiSyncDTO, "auditLogInfo">,
     actor: OrgServiceActor
   ): Promise<TPkiSync> => {
+    if (!applicationId) {
+      throw new BadRequestError({
+        message:
+          "Certificate Syncs must be created inside an Application. Open the Application's Certificate Syncs tab and click Add Sync."
+      });
+    }
+
     await enterprisePkiSyncCheck(licenseService, actor.orgId, destination);
 
     const { permission } = await permissionService.getProjectPermission({
@@ -150,13 +228,30 @@ export const pkiSyncServiceFactory = ({
       }
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    const allowedByProject = permission.can(
       ProjectPermissionPkiSyncActions.Create,
       subject(ProjectPermissionSub.PkiSyncs, {
         subscriberName: subscriber?.name,
         name
       })
     );
+    if (!allowedByProject) {
+      const allowedByResource = await $resourceFallback(
+        ResourcePermissionPkiSyncActions.Create,
+        projectId,
+        applicationId,
+        actor
+      );
+      if (!allowedByResource) {
+        ForbiddenError.from(permission).throwUnlessCan(
+          ProjectPermissionPkiSyncActions.Create,
+          subject(ProjectPermissionSub.PkiSyncs, {
+            subscriberName: subscriber?.name,
+            name
+          })
+        );
+      }
+    }
 
     // Get the destination app type based on PKI sync destination
     const destinationApp = getDestinationAppType(destination);
@@ -171,7 +266,7 @@ export const pkiSyncServiceFactory = ({
     };
 
     if (certificateIds.length > 0) {
-      await validateCertificatesProjectOwnership(certificateIds, projectId);
+      await validateCertificatesForSync(certificateIds, projectId, applicationId);
     }
 
     try {
@@ -185,6 +280,7 @@ export const pkiSyncServiceFactory = ({
         subscriberId,
         connectionId,
         projectId,
+        applicationId: applicationId ?? null,
         ...(isAutoSyncEnabled && { syncStatus: PkiSyncStatus.Pending })
       });
 
@@ -213,6 +309,7 @@ export const pkiSyncServiceFactory = ({
   const updatePkiSync = async (
     {
       id,
+      applicationId,
       name,
       description,
       isAutoSyncEnabled,
@@ -226,6 +323,11 @@ export const pkiSyncServiceFactory = ({
   ): Promise<TPkiSync> => {
     const pkiSync = await pkiSyncDAL.findById(id);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
+    if (applicationId && pkiSync.applicationId !== applicationId) {
+      throw new NotFoundError({
+        message: `PKI sync with id "${id}" is not scoped to application "${applicationId}".`
+      });
+    }
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -241,13 +343,30 @@ export const pkiSyncServiceFactory = ({
       currentSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    const editAllowedByProject = permission.can(
       ProjectPermissionPkiSyncActions.Edit,
       subject(ProjectPermissionSub.PkiSyncs, {
         subscriberName: currentSubscriber?.name,
         name: pkiSync.name
       })
     );
+    if (!editAllowedByProject) {
+      const editAllowedByResource = await $resourceFallback(
+        ResourcePermissionPkiSyncActions.Edit,
+        pkiSync.projectId,
+        pkiSync.applicationId,
+        actor
+      );
+      if (!editAllowedByResource) {
+        ForbiddenError.from(permission).throwUnlessCan(
+          ProjectPermissionPkiSyncActions.Edit,
+          subject(ProjectPermissionSub.PkiSyncs, {
+            subscriberName: currentSubscriber?.name,
+            name: pkiSync.name
+          })
+        );
+      }
+    }
 
     if (name && name !== pkiSync.name) {
       const existingPkiSync = await pkiSyncDAL.findByNameAndProjectId(name, pkiSync.projectId);
@@ -292,7 +411,7 @@ export const pkiSyncServiceFactory = ({
 
     if (certificateIds !== undefined) {
       if (certificateIds.length > 0) {
-        await validateCertificatesProjectOwnership(certificateIds, pkiSync.projectId);
+        await validateCertificatesForSync(certificateIds, pkiSync.projectId, pkiSync.applicationId);
       }
 
       await certificateSyncDAL.removeAllCertificatesFromSync(id);
@@ -318,11 +437,16 @@ export const pkiSyncServiceFactory = ({
   };
 
   const deletePkiSync = async (
-    { id }: Omit<TDeletePkiSyncDTO, "auditLogInfo" | "projectId">,
+    { id, applicationId }: Omit<TDeletePkiSyncDTO, "auditLogInfo" | "projectId">,
     actor: OrgServiceActor
   ) => {
     const pkiSync = await pkiSyncDAL.findById(id);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
+    if (applicationId && pkiSync.applicationId !== applicationId) {
+      throw new NotFoundError({
+        message: `PKI sync with id "${id}" is not scoped to application "${applicationId}".`
+      });
+    }
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -338,19 +462,33 @@ export const pkiSyncServiceFactory = ({
       pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
-      ProjectPermissionPkiSyncActions.Delete,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: pkiSyncSubscriber?.name,
-        name: pkiSync.name
-      })
-    );
+    if (pkiSync.applicationId) {
+      const deleteAllowedByResource = await $resourceFallback(
+        ResourcePermissionPkiSyncActions.Delete,
+        pkiSync.projectId,
+        pkiSync.applicationId,
+        actor
+      );
+      if (!deleteAllowedByResource) {
+        throw new ForbiddenRequestError({
+          message: "You do not have permission to delete this Application's certificate sync"
+        });
+      }
+    } else {
+      ForbiddenError.from(permission).throwUnlessCan(
+        ProjectPermissionPkiSyncActions.Delete,
+        subject(ProjectPermissionSub.PkiSyncs, {
+          subscriberName: pkiSyncSubscriber?.name,
+          name: pkiSync.name
+        })
+      );
+    }
 
     return pkiSyncDAL.deleteById(id);
   };
 
   const listPkiSyncsByProjectId = async (
-    { projectId, certificateId }: TListPkiSyncsByProjectId,
+    { projectId, certificateId, applicationId }: TListPkiSyncsByProjectId,
     actor: OrgServiceActor
   ): Promise<TPkiSync[]> => {
     const { permission } = await permissionService.getProjectPermission({
@@ -362,7 +500,21 @@ export const pkiSyncServiceFactory = ({
       projectId
     });
 
-    ForbiddenError.from(permission).throwUnlessCan(ProjectPermissionPkiSyncActions.Read, ProjectPermissionSub.PkiSyncs);
+    const allowedByProject = permission.can(ProjectPermissionPkiSyncActions.Read, ProjectPermissionSub.PkiSyncs);
+    if (!allowedByProject) {
+      const allowedByResource = await $resourceFallback(
+        ResourcePermissionPkiSyncActions.Read,
+        projectId,
+        applicationId,
+        actor
+      );
+      if (!allowedByResource) {
+        ForbiddenError.from(permission).throwUnlessCan(
+          ProjectPermissionPkiSyncActions.Read,
+          ProjectPermissionSub.PkiSyncs
+        );
+      }
+    }
 
     const processedRules = getProcessedPermissionRules(
       permission,
@@ -370,7 +522,12 @@ export const pkiSyncServiceFactory = ({
       ProjectPermissionSub.PkiSyncs
     );
 
-    const pkiSyncsWithSubscribers = await pkiSyncDAL.findByProjectIdWithSubscribers(projectId, processedRules);
+    const pkiSyncsWithSubscribers = await pkiSyncDAL.findByProjectIdWithSubscribers(
+      projectId,
+      processedRules,
+      undefined,
+      applicationId !== undefined ? { applicationId } : undefined
+    );
 
     if (certificateId) {
       const syncsWithCertificateInfo = await Promise.all(
@@ -398,9 +555,13 @@ export const pkiSyncServiceFactory = ({
     return pkiSyncsWithSubscribers as TPkiSync[];
   };
 
-  const findPkiSyncById = async ({ id, projectId }: TFindPkiSyncByIdDTO, actor: OrgServiceActor) => {
+  const findPkiSyncById = async ({ id, projectId, applicationId }: TFindPkiSyncByIdDTO, actor: OrgServiceActor) => {
     const pkiSync = await pkiSyncDAL.findById(id);
-    if (!pkiSync || (projectId && pkiSync.projectId !== projectId)) {
+    if (
+      !pkiSync ||
+      (projectId && pkiSync.projectId !== projectId) ||
+      (applicationId && pkiSync.applicationId !== applicationId)
+    ) {
       throw new NotFoundError({
         message: `Could not find PKI Sync with ID "${id}"`
       });
@@ -420,13 +581,30 @@ export const pkiSyncServiceFactory = ({
       findSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    const allowedByProject = permission.can(
       ProjectPermissionPkiSyncActions.Read,
       subject(ProjectPermissionSub.PkiSyncs, {
         subscriberName: findSubscriber?.name,
         name: pkiSync.name
       })
     );
+    if (!allowedByProject) {
+      const allowedByResource = await $resourceFallback(
+        ResourcePermissionPkiSyncActions.Read,
+        pkiSync.projectId,
+        pkiSync.applicationId,
+        actor
+      );
+      if (!allowedByResource) {
+        ForbiddenError.from(permission).throwUnlessCan(
+          ProjectPermissionPkiSyncActions.Read,
+          subject(ProjectPermissionSub.PkiSyncs, {
+            subscriberName: findSubscriber?.name,
+            name: pkiSync.name
+          })
+        );
+      }
+    }
 
     const result = {
       ...pkiSync,
@@ -443,26 +621,17 @@ export const pkiSyncServiceFactory = ({
     const pkiSync = await pkiSyncDAL.findById(id);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
 
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
-
     let syncSubscriber;
     if (pkiSync.subscriberId) {
       syncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.SyncCertificates,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: syncSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.SyncCertificates,
+      pkiSync,
+      syncSubscriber?.name,
+      actor
     );
 
     await pkiSyncQueue.queuePkiSyncSyncCertificatesById({ syncId: id });
@@ -477,15 +646,6 @@ export const pkiSyncServiceFactory = ({
     const pkiSync = await pkiSyncDAL.findById(id);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
 
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
-
     // Check if the PKI sync destination supports importing certificates
     const syncOptions = listPkiSyncOptions().find((option) => option.destination === pkiSync.destination);
     if (!syncOptions?.canImportCertificates) {
@@ -499,12 +659,12 @@ export const pkiSyncServiceFactory = ({
       importSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.ImportCertificates,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: importSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.ImportCertificates,
+      pkiSync,
+      importSubscriber?.name,
+      actor
     );
 
     await pkiSyncQueue.queuePkiSyncImportCertificatesById({ syncId: id });
@@ -519,26 +679,17 @@ export const pkiSyncServiceFactory = ({
     const pkiSync = await pkiSyncDAL.findById(id);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
 
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
-
     let removeSubscriber;
     if (pkiSync.subscriberId) {
       removeSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.RemoveCertificates,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: removeSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.RemoveCertificates,
+      pkiSync,
+      removeSubscriber?.name,
+      actor
     );
 
     await pkiSyncQueue.queuePkiSyncRemoveCertificatesById({ syncId: id });
@@ -555,34 +706,25 @@ export const pkiSyncServiceFactory = ({
     actor: OrgServiceActor
   ): Promise<{
     addedCertificates: TCertificateSyncs[];
-    pkiSyncInfo: { projectId: string; destination: string; name: string };
+    pkiSyncInfo: { projectId: string; destination: string; name: string; applicationId?: string | null };
   }> => {
     const pkiSync = await pkiSyncDAL.findById(pkiSyncId);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
-
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
 
     let pkiSyncSubscriber;
     if (pkiSync.subscriberId) {
       pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.Edit,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: pkiSyncSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.Edit,
+      pkiSync,
+      pkiSyncSubscriber?.name,
+      actor
     );
 
-    await validateCertificatesProjectOwnership(certificateIds, pkiSync.projectId);
+    await validateCertificatesForSync(certificateIds, pkiSync.projectId, pkiSync.applicationId);
 
     const addedCertificates = await certificateSyncDAL.addCertificates(
       pkiSyncId,
@@ -598,7 +740,8 @@ export const pkiSyncServiceFactory = ({
       pkiSyncInfo: {
         projectId: pkiSync.projectId,
         destination: pkiSync.destination,
-        name: pkiSync.name
+        name: pkiSync.name,
+        applicationId: pkiSync.applicationId
       }
     };
   };
@@ -606,24 +749,24 @@ export const pkiSyncServiceFactory = ({
   const removeCertificatesFromPkiSync = async (
     { pkiSyncId, certificateIds }: Omit<TRemoveCertificatesFromPkiSyncDTO, "auditLogInfo" | "projectId">,
     actor: OrgServiceActor
-  ): Promise<{ removedCount: number; pkiSyncInfo: { projectId: string; destination: string; name: string } }> => {
+  ): Promise<{
+    removedCount: number;
+    pkiSyncInfo: { projectId: string; destination: string; name: string; applicationId?: string | null };
+  }> => {
     const pkiSync = await pkiSyncDAL.findById(pkiSyncId);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
 
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
+    let pkiSyncSubscriber;
+    if (pkiSync.subscriberId) {
+      pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
+    }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.Edit,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.Edit,
+      pkiSync,
+      pkiSyncSubscriber?.name,
+      actor
     );
 
     const removedCount = await certificateSyncDAL.removeCertificates(pkiSyncId, certificateIds);
@@ -637,7 +780,8 @@ export const pkiSyncServiceFactory = ({
       pkiSyncInfo: {
         projectId: pkiSync.projectId,
         destination: pkiSync.destination,
-        name: pkiSync.name
+        name: pkiSync.name,
+        applicationId: pkiSync.applicationId
       }
     };
   };
@@ -648,25 +792,22 @@ export const pkiSyncServiceFactory = ({
   ): Promise<{
     certificates: TPkiSyncCertificate[];
     totalCount: number;
-    pkiSyncInfo: { projectId: string; destination: string; name: string };
+    pkiSyncInfo: { projectId: string; destination: string; name: string; applicationId?: string | null };
   }> => {
     const pkiSync = await pkiSyncDAL.findById(pkiSyncId);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
 
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
+    let pkiSyncSubscriber;
+    if (pkiSync.subscriberId) {
+      pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
+    }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.Read,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.Read,
+      pkiSync,
+      pkiSyncSubscriber?.name,
+      actor
     );
 
     const result = await certificateSyncDAL.findWithDetails({
@@ -706,7 +847,8 @@ export const pkiSyncServiceFactory = ({
       pkiSyncInfo: {
         projectId: pkiSync.projectId,
         destination: pkiSync.destination,
-        name: pkiSync.name
+        name: pkiSync.name,
+        applicationId: pkiSync.applicationId
       }
     };
   };
@@ -714,30 +856,21 @@ export const pkiSyncServiceFactory = ({
   const setCertificateAsDefault = async (
     { pkiSyncId, certificateId }: Omit<TSetCertificateAsDefaultDTO, "auditLogInfo">,
     actor: OrgServiceActor
-  ): Promise<{ message: string; pkiSyncInfo: { projectId: string; name: string } }> => {
+  ): Promise<{ message: string; pkiSyncInfo: { projectId: string; name: string; applicationId?: string | null } }> => {
     const pkiSync = await pkiSyncDAL.findById(pkiSyncId);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
-
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
 
     let pkiSyncSubscriber;
     if (pkiSync.subscriberId) {
       pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.Edit,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: pkiSyncSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.Edit,
+      pkiSync,
+      pkiSyncSubscriber?.name,
+      actor
     );
 
     const certificateSync = await certificateSyncDAL.findByPkiSyncAndCertificate(pkiSyncId, certificateId);
@@ -761,37 +894,28 @@ export const pkiSyncServiceFactory = ({
 
     return {
       message: "Certificate set as default",
-      pkiSyncInfo: { projectId: pkiSync.projectId, name: pkiSync.name }
+      pkiSyncInfo: { projectId: pkiSync.projectId, name: pkiSync.name, applicationId: pkiSync.applicationId }
     };
   };
 
   const clearDefaultCertificate = async (
     { pkiSyncId }: Omit<TClearDefaultCertificateDTO, "auditLogInfo">,
     actor: OrgServiceActor
-  ): Promise<{ message: string; pkiSyncInfo: { projectId: string; name: string } }> => {
+  ): Promise<{ message: string; pkiSyncInfo: { projectId: string; name: string; applicationId?: string | null } }> => {
     const pkiSync = await pkiSyncDAL.findById(pkiSyncId);
     if (!pkiSync) throw new NotFoundError({ message: "PKI sync not found" });
-
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      actionProjectType: ActionProjectType.CertificateManager,
-      projectId: pkiSync.projectId
-    });
 
     let pkiSyncSubscriber;
     if (pkiSync.subscriberId) {
       pkiSyncSubscriber = await pkiSubscriberDAL.findById(pkiSync.subscriberId);
     }
 
-    ForbiddenError.from(permission).throwUnlessCan(
+    await $assertSyncAction(
       ProjectPermissionPkiSyncActions.Edit,
-      subject(ProjectPermissionSub.PkiSyncs, {
-        subscriberName: pkiSyncSubscriber?.name,
-        name: pkiSync.name
-      })
+      ResourcePermissionPkiSyncActions.Edit,
+      pkiSync,
+      pkiSyncSubscriber?.name,
+      actor
     );
 
     await certificateSyncDAL.clearSyncMetadataFlag(pkiSyncId, "isDefault");
@@ -802,7 +926,7 @@ export const pkiSyncServiceFactory = ({
 
     return {
       message: "Default certificate cleared",
-      pkiSyncInfo: { projectId: pkiSync.projectId, name: pkiSync.name }
+      pkiSyncInfo: { projectId: pkiSync.projectId, name: pkiSync.name, applicationId: pkiSync.applicationId }
     };
   };
 

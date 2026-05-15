@@ -1,13 +1,17 @@
 import { ForbiddenError, subject } from "@casl/ability";
 import * as x509 from "@peculiar/x509";
 
-import { ActionProjectType } from "@app/db/schemas";
+import { ActionProjectType, ResourceType } from "@app/db/schemas";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import {
   ProjectPermissionCertificateActions,
   ProjectPermissionCertificateProfileActions,
   ProjectPermissionSub
 } from "@app/ee/services/permission/project-permission";
+import {
+  ResourcePermissionApplicationActions,
+  ResourcePermissionSub
+} from "@app/ee/services/permission/resource-permission";
 import { buildUrl } from "@app/ee/services/pki-acme/pki-acme-fns";
 import { ScepChallengeType } from "@app/ee/services/pki-scep/challenge";
 import { TScepDynamicChallengeDALFactory } from "@app/ee/services/pki-scep/pki-scep-dynamic-challenge-dal";
@@ -39,6 +43,7 @@ import {
 import { TEstEnrollmentConfigDALFactory } from "../enrollment-config/est-enrollment-config-dal";
 import { TScepEnrollmentConfigDALFactory } from "../enrollment-config/scep-enrollment-config-dal";
 import { TKmsServiceFactory } from "../kms/kms-service";
+import { TPkiApplicationProfileDALFactory } from "../pki-application/pki-application-profile-dal";
 import { TProjectDALFactory } from "../project/project-dal";
 import { getProjectKmsCertificateKeyId } from "../project/project-fns";
 import { TResourceMetadataDALFactory } from "../resource-metadata/resource-metadata-dal";
@@ -145,7 +150,7 @@ const validateExternalConfigs = async (
   validateTemplateByExternalCaType(externalCa.type as CaType, externalConfigs);
 };
 
-const generateAndEncryptAcmeEabSecret = async (
+export const generateAndEncryptAcmeEabSecret = async (
   projectId: string,
   kmsService: Pick<TKmsServiceFactory, "generateKmsKey" | "encryptWithKmsKey">,
   projectDAL: Pick<TProjectDALFactory, "findOne" | "updateById" | "transaction">
@@ -175,7 +180,7 @@ const generateAndEncryptAcmeEabSecret = async (
   }
 };
 
-const validateAndEncryptPemCaChain = async (
+export const validateAndEncryptPemCaChain = async (
   caChain: string,
   projectId: string,
   kmsService: Pick<TKmsServiceFactory, "generateKmsKey" | "encryptWithKmsKey">,
@@ -212,7 +217,7 @@ const validateAndEncryptPemCaChain = async (
   }
 };
 
-const decryptCaChain = async (
+export const decryptCaChain = async (
   encryptedCaChain: Buffer,
   projectId: string,
   kmsService: Pick<TKmsServiceFactory, "generateKmsKey" | "decryptWithKmsKey">,
@@ -262,10 +267,14 @@ type TCertificateProfileServiceFactoryDep = {
   certificateSecretDAL: Pick<TCertificateSecretDALFactory, "findOne">;
   certificateAuthorityDAL: Pick<TCertificateAuthorityDALFactory, "findById">;
   externalCertificateAuthorityDAL: Pick<TExternalCertificateAuthorityDALFactory, "findById" | "findOne">;
-  permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
+  permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getResourcePermission">;
   kmsService: Pick<TKmsServiceFactory, "generateKmsKey" | "encryptWithKmsKey" | "decryptWithKmsKey">;
   projectDAL: Pick<TProjectDALFactory, "findProjectBySlug" | "findOne" | "updateById" | "findById" | "transaction">;
   resourceMetadataDAL: Pick<TResourceMetadataDALFactory, "find">;
+  pkiApplicationProfileDAL?: Pick<
+    TPkiApplicationProfileDALFactory,
+    "findOneByApplicationAndProfile" | "findByApplicationId" | "findAllByProfileId"
+  >;
 };
 
 export type TCertificateProfileServiceFactory = ReturnType<typeof certificateProfileServiceFactory>;
@@ -309,7 +318,8 @@ export const certificateProfileServiceFactory = ({
   permissionService,
   kmsService,
   projectDAL,
-  resourceMetadataDAL
+  resourceMetadataDAL,
+  pkiApplicationProfileDAL
 }: TCertificateProfileServiceFactoryDep) => {
   const createProfile = async ({
     actor,
@@ -399,28 +409,12 @@ export const certificateProfileServiceFactory = ({
       externalCertificateAuthorityDAL
     );
 
-    // Validate enrollment configuration requirements
-    if (data.enrollmentType === EnrollmentType.EST && !data.estConfig) {
-      throw new ForbiddenRequestError({
-        message: "EST enrollment requires EST configuration"
-      });
-    }
-    if (data.enrollmentType === EnrollmentType.API && !data.apiConfig) {
-      throw new ForbiddenRequestError({
-        message: "API enrollment requires API configuration"
-      });
-    }
     if (data.enrollmentType === EnrollmentType.ACME && data.acmeConfig) {
       if (data.acmeConfig.skipEabBinding && data.acmeConfig.skipDnsOwnershipVerification) {
         throw new ForbiddenRequestError({
           message: "Cannot skip both External Account Binding (EAB) and DNS ownership verification at the same time."
         });
       }
-    }
-    if (data.enrollmentType === EnrollmentType.SCEP && !data.scepConfig) {
-      throw new ForbiddenRequestError({
-        message: "SCEP enrollment requires SCEP configuration"
-      });
     }
 
     // Perform crypto operations before the transaction to avoid holding DB connections
@@ -981,7 +975,8 @@ export const certificateProfileServiceFactory = ({
     search,
     enrollmentType,
     issuerType,
-    caId
+    caId,
+    applicationId
   }: {
     actor: ActorType;
     actorId: string;
@@ -994,28 +989,53 @@ export const certificateProfileServiceFactory = ({
     enrollmentType?: EnrollmentType;
     issuerType?: IssuerType;
     caId?: string;
+    applicationId?: string;
   }): Promise<{
     profiles: TCertificateProfileWithConfigs[];
     totalCount: number;
   }> => {
-    const { permission } = await permissionService.getProjectPermission({
-      actor,
-      actorId,
-      projectId,
-      actorAuthMethod,
-      actorOrgId,
-      actionProjectType: ActionProjectType.CertificateManager
-    });
-    ForbiddenError.from(permission).throwUnlessCan(
-      ProjectPermissionCertificateProfileActions.Read,
-      ProjectPermissionSub.CertificateProfiles
-    );
+    let processedRules: ReturnType<typeof getProcessedPermissionRules> | undefined;
+    let attachedProfileIds: string[] | undefined;
+    if (applicationId && pkiApplicationProfileDAL && (actor === ActorType.USER || actor === ActorType.IDENTITY)) {
+      const { permission } = await permissionService.getResourcePermission({
+        actor,
+        actorId,
+        projectId,
+        resourceType: ResourceType.CertificateApplication,
+        resourceId: applicationId,
+        actorAuthMethod,
+        actorOrgId
+      });
+      ForbiddenError.from(permission).throwUnlessCan(
+        ResourcePermissionApplicationActions.Read,
+        ResourcePermissionSub.Application
+      );
+      const attached = await pkiApplicationProfileDAL.findByApplicationId(applicationId);
+      attachedProfileIds = attached.map((p) => p.profileId);
+    } else {
+      const { permission } = await permissionService.getProjectPermission({
+        actor,
+        actorId,
+        projectId,
+        actorAuthMethod,
+        actorOrgId,
+        actionProjectType: ActionProjectType.CertificateManager
+      });
+      ForbiddenError.from(permission).throwUnlessCan(
+        ProjectPermissionCertificateProfileActions.Read,
+        ProjectPermissionSub.CertificateProfiles
+      );
 
-    const processedRules = getProcessedPermissionRules(
-      permission,
-      ProjectPermissionCertificateProfileActions.Read,
-      ProjectPermissionSub.CertificateProfiles
-    );
+      processedRules = getProcessedPermissionRules(
+        permission,
+        ProjectPermissionCertificateProfileActions.Read,
+        ProjectPermissionSub.CertificateProfiles
+      );
+    }
+
+    if (attachedProfileIds && attachedProfileIds.length === 0) {
+      return { profiles: [], totalCount: 0 };
+    }
 
     const profiles = await certificateProfileDAL.findByProjectId(
       projectId,
@@ -1025,7 +1045,8 @@ export const certificateProfileServiceFactory = ({
         search,
         enrollmentType,
         issuerType,
-        caId
+        caId,
+        profileIds: attachedProfileIds
       },
       processedRules
     );
@@ -1036,7 +1057,8 @@ export const certificateProfileServiceFactory = ({
         search,
         enrollmentType,
         issuerType,
-        caId
+        caId,
+        profileIds: attachedProfileIds
       },
       processedRules
     );
@@ -1142,6 +1164,21 @@ export const certificateProfileServiceFactory = ({
         slug: profile.slug
       })
     );
+
+    if (pkiApplicationProfileDAL) {
+      const attachments = await pkiApplicationProfileDAL.findAllByProfileId(profileId);
+      if (attachments.length > 0) {
+        const uniqueNames = Array.from(new Set(attachments.map((a) => a.applicationName))).sort();
+        const preview = uniqueNames.slice(0, 5).join(", ");
+        const remaining = uniqueNames.length - 5;
+        const list = remaining > 0 ? `${preview}, and ${remaining} more` : preview;
+        throw new BadRequestError({
+          message: `Cannot delete this certificate profile while it is attached to ${uniqueNames.length} application${
+            uniqueNames.length === 1 ? "" : "s"
+          } (${list}). Detach the profile from those applications first.`
+        });
+      }
+    }
 
     const deletedProfile = await certificateProfileDAL.deleteById(profileId);
     if (!deletedProfile) {
@@ -1320,6 +1357,7 @@ export const certificateProfileServiceFactory = ({
     params:
       | {
           profileId: string;
+          applicationId?: string;
           isInternal: true;
         }
       | {
@@ -1328,10 +1366,11 @@ export const certificateProfileServiceFactory = ({
           actorAuthMethod: ActorAuthMethod;
           actorOrgId: string | undefined;
           profileId: string;
+          applicationId?: string;
           isInternal?: false;
         }
   ) => {
-    const { profileId, isInternal = false } = params;
+    const { profileId, applicationId, isInternal = false } = params;
     const profile = await certificateProfileDAL.findByIdWithConfigs(profileId);
     if (!profile) {
       throw new NotFoundError({ message: "Certificate profile not found" });
@@ -1362,10 +1401,35 @@ export const certificateProfileServiceFactory = ({
       );
     }
 
-    if (profile.enrollmentType !== EnrollmentType.EST) {
+    if (!applicationId && profile.enrollmentType !== EnrollmentType.EST) {
       throw new ForbiddenRequestError({
         message: "Profile is not configured for EST enrollment"
       });
+    }
+
+    if (applicationId && pkiApplicationProfileDAL) {
+      const junction = await pkiApplicationProfileDAL.findOneByApplicationAndProfile(applicationId, profileId);
+      if (!junction) {
+        throw new NotFoundError({
+          message: `Profile '${profileId}' is not attached to application '${applicationId}'.`
+        });
+      }
+      if (!junction.estConfigId) {
+        throw new NotFoundError({
+          message: "EST configuration not found for this Application/Profile pair."
+        });
+      }
+      const estConfig = await estEnrollmentConfigDAL.findById(junction.estConfigId);
+      if (!estConfig) {
+        throw new NotFoundError({ message: "EST configuration not found." });
+      }
+      return {
+        orgId: profile.projectId,
+        isEnabled: true,
+        caChain: estConfig.encryptedCaChain ?? null,
+        disableBootstrapCertValidation: estConfig.disableBootstrapCaValidation ?? false,
+        hashedPassphrase: estConfig.hashedPassphrase
+      };
     }
 
     if (!profile.estConfig) {
