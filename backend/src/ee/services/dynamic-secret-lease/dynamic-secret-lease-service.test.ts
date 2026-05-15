@@ -1,3 +1,6 @@
+// toSafeUsername is applied to identity.name for both ActorType.Machine and
+// ActorType.IDENTITY (machine identities using Universal Auth resolve to IDENTITY,
+// not Machine — both must be handled to prevent empty-username SQL errors).
 import { toSafeUsername } from "./dynamic-secret-lease-service";
 
 describe("toSafeUsername", () => {

@@ -152,7 +152,7 @@ export const dynamicSecretLeaseServiceFactory = ({
         if (user) {
           identity.name = toSafeUsername(extractEmailUsername(user.username));
         }
-      } else if (actor === ActorType.Machine) {
+      } else if (actor === ActorType.Machine || actor === ActorType.IDENTITY) {
         const machineIdentity = await identityDAL.findById(actorId);
         if (machineIdentity) {
           identity.name = toSafeUsername(machineIdentity.name);
