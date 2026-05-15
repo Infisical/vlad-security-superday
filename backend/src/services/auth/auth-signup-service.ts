@@ -2,13 +2,14 @@ import { AccessScope, OrgMembershipStatus } from "@app/db/schemas";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto/cryptography";
 import { BadRequestError, UnauthorizedError } from "@app/lib/errors";
+import { logger } from "@app/lib/logger";
 import { isDisposableEmail, sanitizeEmail, validateEmail } from "@app/lib/validator";
 
 import { TAuthTokenServiceFactory } from "../auth-token/auth-token-service";
 import { TokenType } from "../auth-token/auth-token-types";
 import { TOrgDALFactory } from "../org/org-dal";
 import { TOrgServiceFactory } from "../org/org-service";
-import { SmtpTemplates, TSmtpService } from "../smtp/smtp-service";
+import { SmtpTemplates, throwIfSmtpError, TSmtpService } from "../smtp/smtp-service";
 import { TUserDALFactory } from "../user/user-dal";
 import { TUserAliasDALFactory } from "../user-alias/user-alias-dal";
 import { TAuthDALFactory } from "./auth-dal";
@@ -41,8 +42,8 @@ export const authSignupServiceFactory = ({
   orgDAL,
   loginService
 }: TAuthSignupDep) => {
-  // first step of signup. create user and send email
-  const beginEmailSignupProcess = async (email: string) => {
+  // First step of signup to send OTP email
+  const beginEmailSignupProcess = async (email: string): Promise<{ cooldownSeconds: number }> => {
     const sanitizedEmail = sanitizeEmail(email);
     validateEmail(sanitizedEmail);
     const isEmailInvalid = await isDisposableEmail(sanitizedEmail);
@@ -50,78 +51,71 @@ export const authSignupServiceFactory = ({
       throw new Error("Provided a disposable email");
     }
 
-    // akhilmhdh: case sensitive email resolution
-    let user = await userDAL.findOne({ username: sanitizedEmail });
-    if (user && user.isAccepted) {
-      // Send informational email for existing accounts instead of throwing error
-      // This prevents user enumeration vulnerability
+    // Acquire cooldown before any operation to avoid reliable enumeration oracle
+    const { emailHash, cooldownSeconds } = await tokenService.acquireEmailSignupCooldown(sanitizedEmail);
+
+    // Case sensitive email resolution
+    const existingUser = await userDAL.findOne({ username: sanitizedEmail });
+    if (existingUser?.isAccepted) {
+      // Send informational email for existing accounts instead of throwing error to prevent user enumeration vulnerability
       const appCfg = getConfig();
-      await smtpService.sendMail({
-        template: SmtpTemplates.SignupExistingAccount,
-        subjectLine: "Sign-up Request for Your Infisical Account",
+      await smtpService
+        .sendMail({
+          template: SmtpTemplates.SignupExistingAccount,
+          subjectLine: "Sign-up Request for Your Infisical Account",
+          recipients: [sanitizedEmail],
+          substitutions: {
+            email: sanitizedEmail,
+            loginUrl: `${appCfg.SITE_URL}/login`,
+            resetPasswordUrl: `${appCfg.SITE_URL}/account-recovery`
+          }
+        })
+        .catch((err) =>
+          logger.error(err, "Failed to send existing account email — swallowing to prevent user enumeration")
+        );
+      return { cooldownSeconds };
+    }
+
+    const token = await tokenService.createEmailSignupToken(emailHash);
+
+    await smtpService
+      .sendMail({
+        template: SmtpTemplates.SignupEmailVerification,
+        subjectLine: `Infisical confirmation code: ${token}`,
         recipients: [sanitizedEmail],
         substitutions: {
-          email: sanitizedEmail,
-          loginUrl: `${appCfg.SITE_URL}/login`,
-          resetPasswordUrl: `${appCfg.SITE_URL}/account-recovery`
+          code: token
         }
-      });
-      return;
-    }
+      })
+      .catch((err) => throwIfSmtpError(err, "Failed to send signup verification email"));
 
-    if (!user) {
-      user = await userDAL.create({
-        authMethods: [AuthMethod.EMAIL],
-        username: sanitizedEmail,
-        email: sanitizedEmail,
-        isGhost: false
-      });
-    }
-    if (!user) throw new Error("Failed to create user");
-
-    const token = await tokenService.createTokenForUser({
-      type: TokenType.TOKEN_EMAIL_CONFIRMATION,
-      userId: user.id
-    });
-
-    await smtpService.sendMail({
-      template: SmtpTemplates.SignupEmailVerification,
-      subjectLine: "Infisical confirmation code",
-      recipients: [sanitizedEmail],
-      substitutions: {
-        code: token
-      }
-    });
+    return { cooldownSeconds };
   };
 
   const verifyEmailSignup = async (email: string, code: string) => {
     const sanitizedEmail = sanitizeEmail(email);
     validateEmail(sanitizedEmail);
-    const user = await userDAL.findOne({ username: sanitizedEmail });
 
-    // Always call validateTokenForUser so the response time includes
-    // the bcrypt cost regardless of whether the user exists.
-    // Use a dummy userId when there's no valid user.
-    const shouldReject = !user || user.isAccepted;
+    await tokenService.validateEmailSignupToken(sanitizedEmail, code);
 
-    try {
-      await tokenService.validateTokenForUser({
-        type: TokenType.TOKEN_EMAIL_CONFIRMATION,
-        userId: shouldReject ? DUMMY_USER_ID : user.id,
-        code
+    // Only create (or recover) the user after the OTP has been verified.
+    let user = await userDAL.findOne({ username: sanitizedEmail });
+    if (!user) {
+      user = await userDAL.create({
+        authMethods: [AuthMethod.EMAIL],
+        username: sanitizedEmail,
+        email: sanitizedEmail,
+        isGhost: false,
+        isEmailVerified: true
       });
-    } catch {
-      // If we were going to reject anyway, throw the generic message.
-      // If the user was valid but the token failed, same generic message.
+    } else if (!user.isAccepted) {
+      // Migration path: pre-user created by the old flow before this refactor.
+      await userDAL.updateById(user.id, { isEmailVerified: true });
+      user = { ...user, isEmailVerified: true };
+    } else {
+      // isAccepted guard should have been caught in beginEmailSignupProcess, but defend here too.
       throw new Error("Invalid or expired verification request");
     }
-
-    // Reject *after* the constant-time token validation work.
-    if (shouldReject) {
-      throw new Error("Invalid or expired verification request");
-    }
-
-    await userDAL.updateById(user.id, { isEmailVerified: true });
 
     const appCfg = getConfig();
     const jwtToken = crypto.jwt().sign(
@@ -164,9 +158,10 @@ export const authSignupServiceFactory = ({
     // whether the request is valid. This prevents timing-based user/alias enumeration.
     let authMethod: AuthMethod;
     let organizationId: string | undefined;
+    let isInvitedUser = false;
     if (dto.type === CompleteAccountType.Email) {
       // Determine rejection before hashing, but don't throw yet
-      const shouldReject = !user || user.isAccepted;
+      const shouldReject = !user || user.isAccepted || Boolean(decodedToken?.aliasId);
 
       // Always hash the password so bcrypt cost is incurred regardless of validity
       const hashedPassword = await crypto.hashing().createHash(dto.password, appCfg.SALT_ROUNDS);
@@ -190,7 +185,7 @@ export const authSignupServiceFactory = ({
           },
           { tx }
         );
-        const isInvitedUser = existingMemberships.length > 0;
+        isInvitedUser = existingMemberships.length > 0;
         if (!isInvitedUser && dto.organizationName) {
           const org = await orgService.createOrganization(
             {
@@ -289,7 +284,8 @@ export const authSignupServiceFactory = ({
       accessToken: tokens.access,
       refreshToken: tokens.refresh,
       authMethod,
-      organizationId
+      organizationId,
+      isInvitedUser
     };
   };
 

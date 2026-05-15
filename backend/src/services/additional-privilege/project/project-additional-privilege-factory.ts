@@ -13,6 +13,8 @@ import {
   ProjectPermissionSub
 } from "@app/ee/services/permission/project-permission";
 import { BadRequestError, NotFoundError, PermissionBoundaryError } from "@app/lib/errors";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { OrgServiceActor } from "@app/lib/types";
 import { unpackPermissions } from "@app/server/routes/sanitizedSchema/permission";
 import { ActorType } from "@app/services/auth/auth-type";
@@ -383,7 +385,7 @@ export const newProjectAdditionalPrivilegesFactory = ({
       }
     }
 
-    if (shouldUseNewPrivilegeSystem && permissions) {
+    if (permissions) {
       validateGrantPrivilegeSubjectActionConditions(
         shouldUseNewPrivilegeSystem,
         permissionAction,
@@ -413,7 +415,10 @@ export const newProjectAdditionalPrivilegesFactory = ({
           : ([ProjectPermissionIdentityActions.Edit, ProjectPermissionSub.Identity] as const);
       ForbiddenError.from(permission).throwUnlessCan(...permissionSet);
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(dto.permission.orgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(dto.permission.orgId),
+        () => orgDAL.findById(dto.permission.orgId)
+      );
       const { permission: targetUserPermission, memberships } = await $getPermission(
         { ...dto.permission, type: actorType, id: actorId },
         scope.value
@@ -422,7 +427,9 @@ export const newProjectAdditionalPrivilegesFactory = ({
       let targetIdentifier: string | undefined;
       if (shouldUseNewPrivilegeSystem) {
         if (actorType === ActorType.USER) {
-          const targetUser = await userDAL.findById(actorId);
+          const targetUser = await requestMemoize(requestMemoKeys.userFindById(actorId), () =>
+            userDAL.findById(actorId)
+          );
           targetIdentifier = targetUser?.email ?? undefined;
         } else {
           targetIdentifier = actorId;
@@ -454,7 +461,10 @@ export const newProjectAdditionalPrivilegesFactory = ({
           : ([ProjectPermissionIdentityActions.Edit, ProjectPermissionSub.Identity] as const);
       ForbiddenError.from(permission).throwUnlessCan(...permissionSet);
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(dto.permission.orgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+        requestMemoKeys.orgFindById(dto.permission.orgId),
+        () => orgDAL.findById(dto.permission.orgId)
+      );
       const { permission: targetUserPermission, memberships } = await $getPermission(
         { ...dto.permission, type: actorType, id: actorId },
         scope.value
@@ -463,7 +473,9 @@ export const newProjectAdditionalPrivilegesFactory = ({
       let targetIdentifier: string | undefined;
       if (shouldUseNewPrivilegeSystem) {
         if (actorType === ActorType.USER) {
-          const targetUser = await userDAL.findById(actorId);
+          const targetUser = await requestMemoize(requestMemoKeys.userFindById(actorId), () =>
+            userDAL.findById(actorId)
+          );
           targetIdentifier = targetUser?.email ?? undefined;
         } else {
           targetIdentifier = actorId;

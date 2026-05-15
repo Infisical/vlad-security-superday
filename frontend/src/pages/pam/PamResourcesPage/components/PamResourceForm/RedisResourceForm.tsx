@@ -9,14 +9,14 @@ import {
   FieldContent,
   FieldError,
   FieldLabel,
+  Input,
   Label,
   SheetFooter,
   Switch,
   TextArea,
   Tooltip,
   TooltipContent,
-  TooltipTrigger,
-  UnstableInput
+  TooltipTrigger
 } from "@app/components/v3";
 import { PamResourceType, TRedisResource } from "@app/hooks/api/pam";
 
@@ -50,11 +50,13 @@ export const RedisResourceForm = ({ resource, onSubmit, closeSheet }: Props) => 
     defaultValues: resource
       ? {
           ...resource,
-          gateway: resource.gatewayId ? { id: resource.gatewayId, name: "" } : undefined
+          gatewayId: resource.gatewayId ?? null,
+          gatewayPoolId: resource.gatewayPoolId ?? null
         }
       : {
           resourceType: PamResourceType.Redis,
-          gateway: undefined,
+          gatewayId: null,
+          gatewayPoolId: null,
           connectionDetails: {
             host: "",
             port: 6379,
@@ -95,7 +97,7 @@ export const RedisResourceForm = ({ resource, onSubmit, closeSheet }: Props) => 
                   <Field>
                     <FieldLabel>Host</FieldLabel>
                     <FieldContent>
-                      <UnstableInput {...field} isError={Boolean(error)} />
+                      <Input {...field} isError={Boolean(error)} />
                       <FieldError errors={[error]} />
                     </FieldContent>
                   </Field>
@@ -108,7 +110,7 @@ export const RedisResourceForm = ({ resource, onSubmit, closeSheet }: Props) => 
                   <Field className="w-24">
                     <FieldLabel>Port</FieldLabel>
                     <FieldContent>
-                      <UnstableInput type="number" {...field} isError={Boolean(error)} />
+                      <Input type="number" {...field} isError={Boolean(error)} />
                       <FieldError errors={[error]} />
                     </FieldContent>
                   </Field>

@@ -12,6 +12,8 @@ import { TPermissionServiceFactory } from "@app/ee/services/permission/permissio
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { groupBy } from "@app/lib/fn";
 import { ms } from "@app/lib/ms";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { SearchResourceOperators } from "@app/lib/search-resource/search";
 import { isDisposableEmail, sanitizeEmail, validateEmail } from "@app/lib/validator";
 
@@ -49,7 +51,7 @@ type TMembershipUserServiceFactoryDep = {
   userDAL: TUserDALFactory;
   permissionService: Pick<
     TPermissionServiceFactory,
-    "getProjectPermission" | "getProjectPermissionByRoles" | "getOrgPermission"
+    "getProjectPermission" | "getProjectPermissionByRoles" | "getOrgPermission" | "getOrgPermissionByRoles"
   >;
   licenseService: TLicenseServiceFactory;
   projectKeyDAL: TProjectKeyDALFactory;
@@ -163,7 +165,9 @@ export const membershipUserServiceFactory = ({
     const { scopeData, data } = dto;
     const factory = scopeFactory[scopeData.scope];
 
-    const orgDetails = await orgDAL.findById(dto.permission.orgId);
+    const orgDetails = await requestMemoize(requestMemoKeys.orgFindById(dto.permission.orgId), () =>
+      orgDAL.findById(dto.permission.orgId)
+    );
 
     // If roles array is empty and scope is Organization, use org's default role
     let rolesToUse = data.roles;
@@ -185,6 +189,8 @@ export const membershipUserServiceFactory = ({
       }
 
       rolesToUse = [{ isTemporary: false, role: defaultRole }];
+      // Expose resolved roles to onCreateMembershipUserGuard's boundary check
+      data.roles = rolesToUse;
     }
 
     const hasNoPermanentRole = rolesToUse.every((el) => el.isTemporary);
@@ -532,7 +538,9 @@ export const membershipUserServiceFactory = ({
 
     await factory.onListMembershipUserGuard(dto);
 
-    const organizationDetails = await orgDAL.findById(dto.scopeData.orgId);
+    const organizationDetails = await requestMemoize(requestMemoKeys.orgFindById(dto.scopeData.orgId), () =>
+      orgDAL.findById(dto.scopeData.orgId)
+    );
     if (!organizationDetails.rootOrgId) return { users: [] };
 
     const users = await membershipUserDAL.listAvailableUsers(organizationDetails.id, organizationDetails.rootOrgId);

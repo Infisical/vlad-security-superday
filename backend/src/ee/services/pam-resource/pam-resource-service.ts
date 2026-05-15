@@ -21,10 +21,12 @@ import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 import { TResourceMetadataDALFactory } from "@app/services/resource-metadata/resource-metadata-dal";
 
+import { TGatewayPoolServiceFactory } from "../gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "../gateway-v2/gateway-v2-service";
 import { TPamAccountDALFactory } from "../pam-account/pam-account-dal";
 import { PamAccountView } from "../pam-account/pam-account-enums";
 import { decryptAccountCredentials, encryptAccountCredentials } from "../pam-account/pam-account-fns";
+import { TPamDomainDALFactory } from "../pam-domain/pam-domain-dal";
 import { TPamResourceDALFactory } from "./pam-resource-dal";
 import { PamResource } from "./pam-resource-enums";
 import { PAM_RESOURCE_FACTORY_MAP } from "./pam-resource-factory";
@@ -39,7 +41,6 @@ import {
 } from "./pam-resource-fns";
 import { TCreateResourceDTO, TListResourcesDTO, TUpdateResourceDTO } from "./pam-resource-types";
 import { TSSHResourceInternalMetadata } from "./ssh/ssh-resource-types";
-import { TWindowsResource } from "./windows-server/windows-server-resource-types";
 
 // Extend this set as more LLM providers are added (e.g. AppConnection.OpenAI)
 const LLM_APP_CONNECTIONS = new Set<AppConnection>([AppConnection.Anthropic]);
@@ -50,15 +51,23 @@ const AI_SUMMARY_SUPPORTED_RESOURCE_TYPES = new Set<PamResource>([PamResource.Po
 type TPamResourceServiceFactoryDep = {
   pamResourceDAL: TPamResourceDALFactory;
   pamResourceFavoriteDAL: TPamResourceFavoriteDALFactory;
-  pamAccountDAL: Pick<TPamAccountDALFactory, "findByProjectIdWithResourceDetails" | "findMetadataByAccountIds">;
+  pamDomainDAL: Pick<TPamDomainDALFactory, "findById">;
+  pamAccountDAL: Pick<TPamAccountDALFactory, "findByProjectIdWithParentDetails" | "findMetadataByAccountIds">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getOrgPermission">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   gatewayV2Service: Pick<
     TGatewayV2ServiceFactory,
     "getPAMConnectionDetails" | "getPlatformConnectionDetailsByGatewayId"
   >;
+  gatewayPoolService: Pick<
+    TGatewayPoolServiceFactory,
+    "resolveEffectiveGatewayId" | "resolveAttachableGatewayFromPool"
+  >;
   resourceMetadataDAL: Pick<TResourceMetadataDALFactory, "insertMany" | "delete">;
   appConnectionDAL: Pick<TAppConnectionDALFactory, "findById">;
+  pamProjectRecordingConfigDAL: {
+    findByProjectId: (projectId: string) => Promise<unknown>;
+  };
 };
 
 export type TPamResourceServiceFactory = ReturnType<typeof pamResourceServiceFactory>;
@@ -66,13 +75,24 @@ export type TPamResourceServiceFactory = ReturnType<typeof pamResourceServiceFac
 export const pamResourceServiceFactory = ({
   pamResourceDAL,
   pamResourceFavoriteDAL,
+  pamDomainDAL,
   pamAccountDAL,
   permissionService,
   kmsService,
   gatewayV2Service,
+  gatewayPoolService,
   resourceMetadataDAL,
-  appConnectionDAL
+  appConnectionDAL,
+  pamProjectRecordingConfigDAL
 }: TPamResourceServiceFactoryDep) => {
+  const assertDomainInProject = async (domainId: string, projectId: string) => {
+    const domain = await pamDomainDAL.findById(domainId);
+    if (!domain) throw new NotFoundError({ message: `Domain with ID '${domainId}' not found` });
+    if (domain.projectId !== projectId) {
+      throw new BadRequestError({ message: "Domain must belong to the same project as the resource" });
+    }
+  };
+
   const getById = async (id: string, resourceType: PamResource, actor: OrgServiceActor) => {
     const resource = await pamResourceDAL.findById(id);
     if (!resource) throw new NotFoundError({ message: `Resource with ID '${id}' not found` });
@@ -101,7 +121,7 @@ export const pamResourceServiceFactory = ({
 
     if (!canReadResources) {
       // Check if user can read at least one account in this resource
-      const { accounts } = await pamAccountDAL.findByProjectIdWithResourceDetails({
+      const { accounts } = await pamAccountDAL.findByProjectIdWithParentDetails({
         projectId: resource.projectId,
         accountView: PamAccountView.Flat,
         filterResourceIds: [id]
@@ -151,14 +171,22 @@ export const pamResourceServiceFactory = ({
       resourceType,
       connectionDetails,
       gatewayId,
+      gatewayPoolId,
       name,
       projectId,
       rotationAccountCredentials,
-      adServerResourceId,
+      domainId,
       metadata
     }: TCreateResourceDTO,
     actor: OrgServiceActor
   ) => {
+    if (gatewayId && gatewayPoolId) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+    if (resourceType !== PamResource.AwsIam && !gatewayId && !gatewayPoolId) {
+      throw new BadRequestError({ message: "A gateway or gateway pool is required for this resource type" });
+    }
+
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
       actorAuthMethod: actor.authMethod,
@@ -177,10 +205,35 @@ export const pamResourceServiceFactory = ({
       })
     );
 
+    if (gatewayPoolId) {
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actor.orgId,
+        actor
+      });
+    }
+
+    if (domainId) {
+      await assertDomainInProject(domainId, projectId);
+    }
+
+    // Windows (RDP) recordings are too large for Postgres-backed storage; require an external bucket
+    if (resourceType === PamResource.Windows) {
+      const recordingConfig = await pamProjectRecordingConfigDAL.findByProjectId(projectId);
+      if (!recordingConfig) {
+        throw new BadRequestError({
+          message:
+            "Windows resources require an external session recording configuration. Configure session recording in project settings before creating a Windows resource."
+        });
+      }
+    }
+
+    const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId({ gatewayId, gatewayPoolId });
+
     const factory = PAM_RESOURCE_FACTORY_MAP[resourceType](
       resourceType,
       connectionDetails,
-      gatewayId,
+      effectiveGatewayId,
       gatewayV2Service,
       projectId
     );
@@ -191,15 +244,6 @@ export const pamResourceServiceFactory = ({
       projectId,
       kmsService
     });
-
-    if (adServerResourceId) {
-      const adResource = await pamResourceDAL.findById(adServerResourceId);
-      if (!adResource)
-        throw new NotFoundError({ message: `AD Server resource with ID '${adServerResourceId}' not found` });
-      if (adResource.projectId !== projectId) {
-        throw new BadRequestError({ message: "AD Server resource must belong to the same project" });
-      }
-    }
 
     let encryptedRotationAccountCredentials: Buffer | null = null;
 
@@ -219,11 +263,12 @@ export const pamResourceServiceFactory = ({
           {
             resourceType,
             encryptedConnectionDetails,
-            gatewayId,
+            gatewayId: gatewayPoolId ? null : gatewayId,
+            gatewayPoolId: gatewayPoolId ?? null,
             name,
             projectId,
             encryptedRotationAccountCredentials,
-            adServerResourceId: adServerResourceId ?? null
+            domainId: domainId ?? null
           },
           tx
         );
@@ -263,12 +308,17 @@ export const pamResourceServiceFactory = ({
       name,
       rotationAccountCredentials,
       gatewayId,
-      adServerResourceId,
+      gatewayPoolId,
+      domainId,
       metadata,
       sessionSummaryConfig
     }: TUpdateResourceDTO,
     actor: OrgServiceActor
   ) => {
+    if (gatewayId && gatewayPoolId) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+
     const resource = await pamResourceDAL.findById(resourceId);
     if (!resource) throw new NotFoundError({ message: `Resource with ID '${resourceId}' not found` });
 
@@ -307,28 +357,52 @@ export const pamResourceServiceFactory = ({
       );
     }
 
+    if (gatewayPoolId && gatewayPoolId !== resource.gatewayPoolId) {
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actor.orgId,
+        actor
+      });
+    }
+
     const updateDoc: Partial<TPamResources> = {};
 
-    const effectiveGatewayId = gatewayId !== undefined ? gatewayId : resource.gatewayId;
+    // Mutual exclusion: setting one clears the other.
+    let effectiveGatewayIdAttr: string | null | undefined = resource.gatewayId;
+    let effectiveGatewayPoolIdAttr: string | null | undefined = resource.gatewayPoolId ?? null;
+    if (gatewayId !== undefined && gatewayPoolId !== undefined) {
+      effectiveGatewayIdAttr = gatewayId;
+      effectiveGatewayPoolIdAttr = gatewayPoolId;
+    } else if (gatewayId !== undefined) {
+      effectiveGatewayIdAttr = gatewayId;
+      effectiveGatewayPoolIdAttr = gatewayId !== null ? null : undefined;
+    } else if (gatewayPoolId !== undefined) {
+      effectiveGatewayPoolIdAttr = gatewayPoolId;
+      effectiveGatewayIdAttr = gatewayPoolId !== null ? null : undefined;
+    }
 
-    if (gatewayId !== undefined) {
-      updateDoc.gatewayId = gatewayId;
+    if (gatewayId !== undefined || gatewayPoolId !== undefined) {
+      updateDoc.gatewayId = effectiveGatewayIdAttr;
+      updateDoc.gatewayPoolId = effectiveGatewayPoolIdAttr;
     }
 
     if (name !== undefined) {
       updateDoc.name = name;
     }
 
-    if (adServerResourceId !== undefined) {
-      if (adServerResourceId) {
-        const adResource = await pamResourceDAL.findById(adServerResourceId);
-        if (!adResource)
-          throw new NotFoundError({ message: `AD Server resource with ID '${adServerResourceId}' not found` });
-        if (adResource.projectId !== resource.projectId) {
-          throw new BadRequestError({ message: "AD Server resource must belong to the same project" });
-        }
+    if (domainId !== undefined) {
+      if (domainId) {
+        await assertDomainInProject(domainId, resource.projectId);
       }
-      updateDoc.adServerResourceId = adServerResourceId;
+      updateDoc.domainId = domainId;
+    }
+
+    let effectiveGatewayId: string | null | undefined;
+    if (connectionDetails !== undefined || rotationAccountCredentials !== undefined) {
+      effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId({
+        gatewayId: effectiveGatewayIdAttr,
+        gatewayPoolId: effectiveGatewayPoolIdAttr
+      });
     }
 
     if (connectionDetails !== undefined) {
@@ -647,7 +721,7 @@ export const pamResourceServiceFactory = ({
     }
 
     // Fetch all accounts for the project (flat view, no pagination) for permission checking
-    const { accounts: allAccounts } = await pamAccountDAL.findByProjectIdWithResourceDetails({
+    const { accounts: allAccounts } = await pamAccountDAL.findByProjectIdWithParentDetails({
       projectId,
       accountView: PamAccountView.Flat
     });
@@ -666,9 +740,12 @@ export const pamResourceServiceFactory = ({
       Array<{ accountName: string; metadata: Array<{ id: string; key: string; value: string }> }>
     >();
     for (const account of allAccounts) {
-      const existing = accountsByResourceId.get(account.resourceId) || [];
-      existing.push({ accountName: account.name, metadata: accountMetadata[account.id] || [] });
-      accountsByResourceId.set(account.resourceId, existing);
+      if (account.resourceId) {
+        // Skip domain accounts for resource-level permission check
+        const existing = accountsByResourceId.get(account.resourceId) || [];
+        existing.push({ accountName: account.name, metadata: accountMetadata[account.id] || [] });
+        accountsByResourceId.set(account.resourceId, existing);
+      }
     }
 
     // Filter to only resources where the user can read at least one account
@@ -784,41 +861,6 @@ export const pamResourceServiceFactory = ({
     return { caPublicKey };
   };
 
-  const listRelatedResources = async (adServerResourceId: string, actor: OrgServiceActor) => {
-    const resource = await pamResourceDAL.findById(adServerResourceId);
-    if (!resource) throw new NotFoundError({ message: `Resource with ID '${adServerResourceId}' not found` });
-
-    if (resource.resourceType !== PamResource.ActiveDirectory) {
-      throw new BadRequestError({ message: "Related resources can only be listed for Active Directory resources" });
-    }
-
-    const { permission } = await permissionService.getProjectPermission({
-      actor: actor.type,
-      actorAuthMethod: actor.authMethod,
-      actorId: actor.id,
-      actorOrgId: actor.orgId,
-      projectId: resource.projectId,
-      actionProjectType: ActionProjectType.PAM
-    });
-
-    const metadataByResourceId = await pamResourceDAL.findMetadataByResourceIds([adServerResourceId]);
-
-    ForbiddenError.from(permission).throwUnlessCan(
-      ProjectPermissionActions.Read,
-      subject(ProjectPermissionSub.PamResources, {
-        name: resource.name,
-        resourceType: resource.resourceType,
-        metadata: metadataByResourceId[adServerResourceId] || []
-      })
-    );
-
-    const relatedResources = await pamResourceDAL.findByAdServerResourceId(adServerResourceId);
-
-    return Promise.all(
-      relatedResources.map((r) => decryptResource(r, resource.projectId, kmsService) as Promise<TWindowsResource>)
-    );
-  };
-
   const setUserResourceFavorite = async ({
     projectId,
     resourceId,
@@ -875,7 +917,6 @@ export const pamResourceServiceFactory = ({
     list,
     listResourceOptions,
     getOrCreateSshCa,
-    listRelatedResources,
     setUserResourceFavorite
   };
 };

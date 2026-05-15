@@ -248,6 +248,10 @@ export enum ProjectPermissionAuditLogsActions {
   Read = "read"
 }
 
+export enum ProjectPermissionInsightsActions {
+  Read = "read"
+}
+
 export enum ProjectPermissionPamAccountActions {
   Access = "access",
   Read = "read",
@@ -270,6 +274,10 @@ export enum ProjectPermissionPamAccountPolicyActions {
   Delete = "delete"
 }
 
+export enum ProjectPermissionPamInsightsActions {
+  Read = "read"
+}
+
 export enum ProjectPermissionPamDiscoveryActions {
   Read = "read",
   Create = "create",
@@ -284,6 +292,15 @@ export enum ProjectPermissionMcpEndpointActions {
   Edit = "edit",
   Delete = "delete",
   Connect = "connect"
+}
+
+export enum ProjectPermissionHoneyTokenActions {
+  Read = "read",
+  ReadCredentials = "read-credentials",
+  Create = "create",
+  Edit = "edit",
+  Reset = "reset",
+  Revoke = "revoke"
 }
 
 export enum ProjectPermissionApprovalRequestActions {
@@ -337,6 +354,7 @@ export enum ProjectPermissionSub {
   PkiSubscribers = "pki-subscribers",
   PkiAlerts = "pki-alerts",
   PkiCollections = "pki-collections",
+  CertificateInventoryViews = "certificate-inventory-views",
   Kms = "kms",
   Cmek = "cmek",
   SecretSyncs = "secret-syncs",
@@ -352,17 +370,21 @@ export enum ProjectPermissionSub {
   AppConnections = "app-connections",
   PamFolders = "pam-folders",
   PamResources = "pam-resources",
+  PamDomains = "pam-domains",
   PamAccounts = "pam-accounts",
   PamSessions = "pam-sessions",
   PamAccountPolicies = "pam-account-policies",
   PamDiscovery = "pam-discovery",
+  PamInsights = "pam-insights",
   CertificateProfiles = "certificate-profiles",
   CertificatePolicies = "certificate-policies",
   ApprovalRequests = "approval-requests",
   ApprovalRequestGrants = "approval-request-grants",
   McpEndpoints = "mcp-endpoints",
   McpServers = "mcp-servers",
-  McpActivityLogs = "mcp-activity-logs"
+  McpActivityLogs = "mcp-activity-logs",
+  HoneyTokens = "honey-tokens",
+  Insights = "insights"
 }
 
 // Structure: { [subject]: { [action]: allowedConditionKeys[] } }
@@ -522,15 +544,23 @@ export type McpEndpointSubjectFields = {
 };
 
 export type PamAccountSubjectFields = {
-  resourceName: string;
+  resourceName?: string;
+  resourceType?: string;
+  domainName?: string;
+  domainType?: string;
   accountName: string;
-  resourceType: string;
   metadata?: { key: string; value: string }[];
 };
 
 export type PamResourceSubjectFields = {
   name: string;
   resourceType: string;
+  metadata?: { key: string; value: string }[];
+};
+
+export type PamDomainSubjectFields = {
+  name: string;
+  domainType: string;
   metadata?: { key: string; value: string }[];
 };
 
@@ -635,6 +665,7 @@ export type ProjectPermissionSet =
   | [ProjectPermissionActions, ProjectPermissionSub.SshHostGroups]
   | [ProjectPermissionActions, ProjectPermissionSub.PkiAlerts]
   | [ProjectPermissionActions, ProjectPermissionSub.PkiCollections]
+  | [ProjectPermissionActions, ProjectPermissionSub.CertificateInventoryViews]
   | [ProjectPermissionKmipActions, ProjectPermissionSub.Kmip]
   | [ProjectPermissionCmekActions, ProjectPermissionSub.Cmek]
   | [ProjectPermissionActions.Delete, ProjectPermissionSub.Project]
@@ -666,16 +697,22 @@ export type ProjectPermissionSet =
       ProjectPermissionSub.PamResources | (ForcedSubject<ProjectPermissionSub.PamResources> & PamResourceSubjectFields)
     ]
   | [
+      ProjectPermissionActions,
+      ProjectPermissionSub.PamDomains | (ForcedSubject<ProjectPermissionSub.PamDomains> & PamDomainSubjectFields)
+    ]
+  | [
       ProjectPermissionPamAccountActions,
       ProjectPermissionSub.PamAccounts | (ForcedSubject<ProjectPermissionSub.PamAccounts> & PamAccountSubjectFields)
     ]
   | [ProjectPermissionPamSessionActions, ProjectPermissionSub.PamSessions]
   | [ProjectPermissionPamAccountPolicyActions, ProjectPermissionSub.PamAccountPolicies]
   | [ProjectPermissionPamDiscoveryActions, ProjectPermissionSub.PamDiscovery]
+  | [ProjectPermissionPamInsightsActions, ProjectPermissionSub.PamInsights]
   | [
       ProjectPermissionMcpEndpointActions,
       ProjectPermissionSub.McpEndpoints | (ForcedSubject<ProjectPermissionSub.McpEndpoints> & McpEndpointSubjectFields)
     ]
+  | [ProjectPermissionHoneyTokenActions, ProjectPermissionSub.HoneyTokens]
   | [ProjectPermissionActions, ProjectPermissionSub.McpServers]
   | [ProjectPermissionActions, ProjectPermissionSub.McpActivityLogs]
   | [
@@ -694,7 +731,8 @@ export type ProjectPermissionSet =
     ]
   | [ProjectPermissionApprovalRequestActions, ProjectPermissionSub.ApprovalRequests]
   | [ProjectPermissionApprovalRequestGrantActions, ProjectPermissionSub.ApprovalRequestGrants]
-  | [ProjectPermissionSecretApprovalRequestActions, ProjectPermissionSub.SecretApprovalRequest];
+  | [ProjectPermissionSecretApprovalRequestActions, ProjectPermissionSub.SecretApprovalRequest]
+  | [ProjectPermissionInsightsActions, ProjectPermissionSub.Insights];
 
 const SECRET_PATH_MISSING_SLASH_ERR_MSG = "Invalid Secret Path; it must start with a '/'";
 const SECRET_PATH_PERMISSION_OPERATOR_SCHEMA = z.union([
@@ -1256,6 +1294,28 @@ const PamAccountConditionSchema = z
         })
         .partial()
     ]),
+    domainName: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
+    domainType: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
     metadata: z.object({
       [PermissionConditionOperators.$ELEMENTMATCH]: z
         .object({
@@ -1293,6 +1353,53 @@ const PamResourceConditionSchema = z
         .partial()
     ]),
     resourceType: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
+    metadata: z.object({
+      [PermissionConditionOperators.$ELEMENTMATCH]: z
+        .object({
+          key: z
+            .object({
+              [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+              [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+              [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN]
+            })
+            .partial(),
+          value: z
+            .object({
+              [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+              [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+              [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN]
+            })
+            .partial()
+        })
+        .partial()
+    })
+  })
+  .partial();
+
+const PamDomainConditionSchema = z
+  .object({
+    name: z.union([
+      z.string(),
+      z
+        .object({
+          [PermissionConditionOperators.$EQ]: PermissionConditionSchema[PermissionConditionOperators.$EQ],
+          [PermissionConditionOperators.$NEQ]: PermissionConditionSchema[PermissionConditionOperators.$NEQ],
+          [PermissionConditionOperators.$IN]: PermissionConditionSchema[PermissionConditionOperators.$IN],
+          [PermissionConditionOperators.$GLOB]: PermissionConditionSchema[PermissionConditionOperators.$GLOB]
+        })
+        .partial()
+    ]),
+    domainType: z.union([
       z.string(),
       z
         .object({
@@ -1518,6 +1625,12 @@ const GeneralPermissionSchema = [
     )
   }),
   z.object({
+    subject: z.literal(ProjectPermissionSub.Insights).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionInsightsActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
     subject: z.literal(ProjectPermissionSub.IpAllowList).describe("The entity this permission pertains to."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
       "Describe what action an entity can take."
@@ -1559,6 +1672,14 @@ const GeneralPermissionSchema = [
   }),
   z.object({
     subject: z.literal(ProjectPermissionSub.PkiCollections).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
+    subject: z
+      .literal(ProjectPermissionSub.CertificateInventoryViews)
+      .describe("The entity this permission pertains to."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
       "Describe what action an entity can take."
     )
@@ -1660,6 +1781,16 @@ const GeneralPermissionSchema = [
     ).optional()
   }),
   z.object({
+    subject: z.literal(ProjectPermissionSub.PamDomains).describe("The entity this permission pertains to."),
+    inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
+      "Describe what action an entity can take."
+    ),
+    conditions: PamDomainConditionSchema.describe(
+      "When specified, only matching conditions will be allowed to access given domain."
+    ).optional()
+  }),
+  z.object({
     subject: z.literal(ProjectPermissionSub.PamAccounts).describe("The entity this permission pertains to."),
     inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionPamAccountActions).describe(
@@ -1688,6 +1819,12 @@ const GeneralPermissionSchema = [
     )
   }),
   z.object({
+    subject: z.literal(ProjectPermissionSub.PamInsights).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionPamInsightsActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
     subject: z.literal(ProjectPermissionSub.McpEndpoints).describe("The entity this permission pertains to."),
     inverted: z.boolean().optional().describe("Whether rule allows or forbids."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionMcpEndpointActions).describe(
@@ -1706,6 +1843,12 @@ const GeneralPermissionSchema = [
   z.object({
     subject: z.literal(ProjectPermissionSub.McpActivityLogs).describe("The entity this permission pertains to."),
     action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionActions).describe(
+      "Describe what action an entity can take."
+    )
+  }),
+  z.object({
+    subject: z.literal(ProjectPermissionSub.HoneyTokens).describe("The entity this permission pertains to."),
+    action: CASL_ACTION_SCHEMA_NATIVE_ENUM(ProjectPermissionHoneyTokenActions).describe(
       "Describe what action an entity can take."
     )
   }),
@@ -1933,8 +2076,10 @@ export type TProjectPermissionV2Schema = z.infer<typeof ProjectPermissionV2Schem
 
 export const buildServiceTokenProjectPermission = (
   scopes: Array<{ secretPath: string; environment: string }>,
-  permission: string[]
+  permission: string[],
+  options: { useLegacyRead?: boolean } = {}
 ) => {
+  const { useLegacyRead = true } = options;
   const canWrite = permission.includes("write");
   const canRead = permission.includes("read");
   const { can, build } = new AbilityBuilder<MongoAbility<ProjectPermissionSet>>(createMongoAbility);
@@ -1959,11 +2104,26 @@ export const buildServiceTokenProjectPermission = (
           });
         }
         if (canRead) {
-          can(ProjectPermissionActions.Read, subject, {
-            // @ts-expect-error type
-            secretPath: { $glob: secretPath },
-            environment
-          });
+          if (!useLegacyRead && subject === ProjectPermissionSub.Secrets) {
+            // @ts-expect-error CASL's per-action condition schema doesn't expose $glob, but the
+            // conditionsMatcher resolves it at runtime; same pattern is used in the legacy branch.
+            can(ProjectPermissionSecretActions.ReadValue, subject, {
+              secretPath: { $glob: secretPath },
+              environment
+            });
+            // @ts-expect-error CASL's per-action condition schema doesn't expose $glob, but the
+            // conditionsMatcher resolves it at runtime; same pattern is used in the legacy branch.
+            can(ProjectPermissionSecretActions.DescribeSecret, subject, {
+              secretPath: { $glob: secretPath },
+              environment
+            });
+          } else {
+            can(ProjectPermissionActions.Read, subject, {
+              // @ts-expect-error type
+              secretPath: { $glob: secretPath },
+              environment
+            });
+          }
         }
       }
     );

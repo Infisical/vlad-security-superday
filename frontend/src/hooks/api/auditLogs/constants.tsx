@@ -245,6 +245,15 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.DASHBOARD_GET_SECRET_VALUE]: "Dashboard Get Secret Value",
   [EventType.DASHBOARD_GET_SECRET_VERSION_VALUE]: "Dashboard Get Secret Version Value",
 
+  [EventType.VIEW_INSIGHTS_SECRETS_MANAGEMENT_CALENDAR]:
+    "View Secrets Management Calendar Insights",
+  [EventType.VIEW_INSIGHTS_SECRETS_MANAGEMENT_ACCESS_VOLUME]:
+    "View Secrets Management Access Volume Insights",
+  [EventType.VIEW_INSIGHTS_SECRETS_MANAGEMENT_ACCESS_LOCATIONS]:
+    "View Secrets Management Access Locations Insights",
+  [EventType.VIEW_INSIGHTS_AUTH_METHODS]: "View Machine Identity Auth Methods Insights",
+  [EventType.VIEW_INSIGHTS_SECRETS_MANAGEMENT_SUMMARY]: "View Secrets Management Summary Insights",
+
   [EventType.CREATE_PROJECT_ROLE]: "Create Project Role",
   [EventType.UPDATE_PROJECT_ROLE]: "Update Project Role",
   [EventType.DELETE_PROJECT_ROLE]: "Delete Project Role",
@@ -286,6 +295,12 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.PAM_ACCOUNT_POLICY_GET]: "Get PAM Account Policy",
   [EventType.PAM_ACCOUNT_READ_CREDENTIALS]: "Read PAM Account Credentials",
   [EventType.PAM_WEB_ACCESS_SESSION_TICKET_CREATED]: "Create PAM Web Access Session Ticket",
+  [EventType.PAM_SESSION_CHUNK_UPLOAD]: "PAM Session Chunk Upload",
+  [EventType.PAM_SESSION_UPLOAD_TOKEN_INVALID]: "PAM Session Upload Token Invalid",
+  [EventType.PAM_RECORDING_CONFIG_UPDATE]: "Update PAM Recording Config",
+  [EventType.PAM_RECORDING_CONFIG_DELETE]: "Delete PAM Recording Config",
+  [EventType.PAM_RECORDING_BUCKET_CONNECTION_TEST_FAILED]:
+    "PAM Recording Bucket Connection Test Failed",
   [EventType.PAM_RESOURCE_LIST]: "List PAM Resources",
   [EventType.PAM_RESOURCE_GET]: "Get PAM Resource",
   [EventType.PAM_RESOURCE_CREATE]: "Create PAM Resource",
@@ -318,6 +333,16 @@ export const eventToNameMap: { [K in EventType]: string } = {
   [EventType.ORDER_CERTIFICATE_FROM_PROFILE]: "Order Certificate From Profile",
   [EventType.GET_CERTIFICATE_PROFILE_LATEST_ACTIVE_BUNDLE]:
     "Get Certificate Profile Latest Active Bundle",
+
+  [EventType.CREATE_CERTIFICATE_REQUEST]: "Create Certificate Request",
+  [EventType.GET_CERTIFICATE_REQUEST]: "Get Certificate Request",
+  [EventType.GET_CERTIFICATE_FROM_REQUEST]: "Get Certificate From Request",
+  [EventType.LIST_CERTIFICATE_REQUESTS]: "List Certificate Requests",
+  [EventType.TRIGGER_CERTIFICATE_REQUEST_VALIDATION]: "Trigger Certificate Request Validation",
+
+  [EventType.SCEP_ENROLLMENT]: "SCEP Certificate Enrollment",
+  [EventType.SCEP_RENEWAL]: "SCEP Certificate Renewal",
+  [EventType.SCEP_DYNAMIC_CHALLENGE_GENERATED]: "SCEP Dynamic Challenge Generated",
 
   [EventType.APPROVAL_POLICY_CREATE]: "Create Approval Policy",
   [EventType.APPROVAL_POLICY_UPDATE]: "Update Approval Policy",
@@ -374,7 +399,19 @@ export const eventToNameMap: { [K in EventType]: string } = {
 
   [EventType.SECRET_VALIDATION_RULE_CREATE]: "Create Secret Validation Rule",
   [EventType.SECRET_VALIDATION_RULE_UPDATE]: "Update Secret Validation Rule",
-  [EventType.SECRET_VALIDATION_RULE_DELETE]: "Delete Secret Validation Rule"
+  [EventType.SECRET_VALIDATION_RULE_DELETE]: "Delete Secret Validation Rule",
+
+  // External Migration
+  [EventType.EXTERNAL_MIGRATION_CREATE]: "Create External Migration",
+  [EventType.EXTERNAL_MIGRATION_UPDATE]: "Update External Migration",
+  [EventType.EXTERNAL_MIGRATION_DELETE]: "Delete External Migration",
+  [EventType.GATEWAY_CREATE]: "Create gateway",
+  [EventType.GATEWAY_ENROLL]: "Enroll gateway (legacy)",
+  [EventType.GATEWAY_ENROLLMENT_TOKEN_CREATE]: "Generate gateway enrollment token",
+  [EventType.RESOURCE_AUTH_METHOD_LOGIN]: "Gateway login",
+  [EventType.RESOURCE_AUTH_METHOD_LOGIN_FAILED]: "Gateway login failed",
+  [EventType.RESOURCE_AUTH_METHOD_UPDATE]: "Update gateway auth method",
+  [EventType.RESOURCE_AUTH_METHOD_REVOKE]: "Revoke gateway access"
 };
 
 export const userAgentTypeToNameMap: { [K in UserAgentType]: string } = {
@@ -453,7 +490,12 @@ export const projectToEventsMap: Partial<Record<ProjectType, EventType[]>> = {
     EventType.PAM_RESOURCE_ROTATION_RULE_CREATE,
     EventType.PAM_RESOURCE_ROTATION_RULE_UPDATE,
     EventType.PAM_RESOURCE_ROTATION_RULE_DELETE,
-    EventType.PAM_RESOURCE_ROTATION_RULE_REORDER
+    EventType.PAM_RESOURCE_ROTATION_RULE_REORDER,
+    EventType.PAM_SESSION_CHUNK_UPLOAD,
+    EventType.PAM_SESSION_UPLOAD_TOKEN_INVALID,
+    EventType.PAM_RECORDING_CONFIG_UPDATE,
+    EventType.PAM_RECORDING_CONFIG_DELETE,
+    EventType.PAM_RECORDING_BUCKET_CONNECTION_TEST_FAILED
   ],
   [ProjectType.AI]: [
     ...sharedProjectEvents,

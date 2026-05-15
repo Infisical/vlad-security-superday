@@ -1,9 +1,4 @@
 import {
-  CreateActiveDirectoryResourceSchema,
-  SanitizedActiveDirectoryResourceSchema,
-  UpdateActiveDirectoryResourceSchema
-} from "@app/ee/services/pam-resource/active-directory/active-directory-resource-schemas";
-import {
   CreateAwsIamResourceSchema,
   SanitizedAwsIamResourceSchema,
   UpdateAwsIamResourceSchema
@@ -28,6 +23,11 @@ import {
   MySQLResourceSchema,
   UpdateMySQLResourceSchema
 } from "@app/ee/services/pam-resource/mysql/mysql-resource-schemas";
+import {
+  CreateOracleResourceSchema,
+  OracleResourceSchema,
+  UpdateOracleResourceSchema
+} from "@app/ee/services/pam-resource/oracle/oracle-resource-schemas";
 import { PamResource } from "@app/ee/services/pam-resource/pam-resource-enums";
 import {
   CreatePostgresResourceSchema,
@@ -51,7 +51,6 @@ import {
 } from "@app/ee/services/pam-resource/windows-server/windows-server-resource-schemas";
 
 import {
-  registerActiveDirectoryRelatedResourcesEndpoint,
   registerPamResourceEndpoints,
   registerSshCaPublicKeyEndpoint,
   registerSshCaSetupEndpoint
@@ -141,14 +140,13 @@ export const PAM_RESOURCE_REGISTER_ROUTER_MAP: Record<PamResource, (server: Fast
       updateResourceSchema: UpdateWindowsResourceSchema
     });
   },
-  [PamResource.ActiveDirectory]: async (server: FastifyZodProvider) => {
+  [PamResource.OracleDB]: async (server: FastifyZodProvider) => {
     registerPamResourceEndpoints({
       server,
-      resourceType: PamResource.ActiveDirectory,
-      resourceResponseSchema: SanitizedActiveDirectoryResourceSchema,
-      createResourceSchema: CreateActiveDirectoryResourceSchema,
-      updateResourceSchema: UpdateActiveDirectoryResourceSchema
+      resourceType: PamResource.OracleDB,
+      resourceResponseSchema: OracleResourceSchema,
+      createResourceSchema: CreateOracleResourceSchema,
+      updateResourceSchema: UpdateOracleResourceSchema
     });
-    registerActiveDirectoryRelatedResourcesEndpoint(server);
   }
 };

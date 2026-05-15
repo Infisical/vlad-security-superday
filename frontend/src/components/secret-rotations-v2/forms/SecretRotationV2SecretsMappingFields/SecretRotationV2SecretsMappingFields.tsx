@@ -7,6 +7,7 @@ import { Auth0ClientSecretRotationSecretsMappingFields } from "./Auth0ClientSecr
 import { AwsIamUserSecretRotationSecretsMappingFields } from "./AwsIamUserSecretRotationSecretsMappingFields";
 import { AzureClientSecretRotationSecretsMappingFields } from "./AzureClientSecretRotationSecretsMappingFields";
 import { DatabricksServicePrincipalSecretRotationSecretsMappingFields } from "./DatabricksServicePrincipalSecretRotationSecretsMappingFields";
+import { DatadogApplicationKeySecretRotationSecretsMappingFields } from "./DatadogApplicationKeySecretRotationSecretsMappingFields";
 import { DbtServiceTokenRotationSecretsMappingFields } from "./DbtServiceTokenRotationSecretsMappingFields";
 import { HpIloRotationSecretsMappingFields } from "./HpIloRotationSecretsMappingFields";
 import { LdapPasswordRotationSecretsMappingFields } from "./LdapPasswordRotationSecretsMappingFields";
@@ -14,6 +15,7 @@ import { OktaClientSecretRotationSecretsMappingFields } from "./OktaClientSecret
 import { OpenRouterApiKeyRotationSecretsMappingFields } from "./OpenRouterApiKeyRotationSecretsMappingFields";
 import { RedisCredentialsRotationSecretsMappingFields } from "./RedisCredentialsRotationSecretsMappingFields";
 import { SqlCredentialsRotationSecretsMappingFields } from "./shared";
+import { SupabaseApiKeyRotationSecretsMappingFields } from "./SupabaseApiKeyRotationSecretsMappingFields";
 import { UnixLinuxLocalAccountRotationSecretsMappingFields } from "./UnixLinuxLocalAccountRotationSecretsMappingFields";
 import { WindowsLocalAccountRotationSecretsMappingFields } from "./WindowsLocalAccountRotationSecretsMappingFields";
 
@@ -35,7 +37,10 @@ const COMPONENT_MAP: Record<SecretRotation, React.FC> = {
   [SecretRotation.DbtServiceToken]: DbtServiceTokenRotationSecretsMappingFields,
   [SecretRotation.WindowsLocalAccount]: WindowsLocalAccountRotationSecretsMappingFields,
   [SecretRotation.OpenRouterApiKey]: OpenRouterApiKeyRotationSecretsMappingFields,
-  [SecretRotation.HpIloLocalAccount]: HpIloRotationSecretsMappingFields
+  [SecretRotation.HpIloLocalAccount]: HpIloRotationSecretsMappingFields,
+  [SecretRotation.SupabaseApiKey]: SupabaseApiKeyRotationSecretsMappingFields,
+  [SecretRotation.DatadogApplicationKeySecret]:
+    DatadogApplicationKeySecretRotationSecretsMappingFields
 };
 
 export const SecretRotationV2SecretsMappingFields = () => {

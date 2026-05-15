@@ -1,11 +1,14 @@
 import { z } from "zod";
 
 import { AccessScope, GroupsSchema, TemporaryPermissionMode } from "@app/db/schemas";
+import { EventType } from "@app/ee/services/audit-log/audit-log-types";
 import { ApiDocsTags } from "@app/lib/api-docs";
 import { ms } from "@app/lib/ms";
+import { OrderByDirection } from "@app/lib/types";
 import { readLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMode } from "@app/services/auth/auth-type";
+import { OrgGroupsOrderBy } from "@app/services/membership-group/membership-group-types";
 
 /**
  * Organization group memberships.
@@ -54,7 +57,14 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
       security: [{ bearerAuth: [] }],
       querystring: z.object({
         limit: z.coerce.number().min(1).max(100).default(100).optional(),
-        offset: z.coerce.number().min(0).default(0).optional()
+        offset: z.coerce.number().min(0).default(0).optional(),
+        search: z.string().optional(),
+        roles: z
+          .union([z.string(), z.array(z.string())])
+          .transform((v) => (typeof v === "string" ? [v] : v))
+          .optional(),
+        orderBy: z.nativeEnum(OrgGroupsOrderBy).optional(),
+        orderDirection: z.nativeEnum(OrderByDirection).optional()
       }),
       response: {
         200: z.object({
@@ -72,7 +82,11 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
         },
         data: {
           limit: req.query.limit,
-          offset: req.query.offset
+          offset: req.query.offset,
+          search: req.query.search,
+          roles: req.query.roles,
+          orderBy: req.query.orderBy,
+          orderDirection: req.query.orderDirection
         }
       });
 
@@ -130,7 +144,7 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
       }
     },
     handler: async (req) => {
-      await server.services.membershipGroup.createMembership({
+      const { group } = await server.services.membershipGroup.createMembership({
         scopeData: {
           scope: AccessScope.Organization,
           orgId: req.permission.orgId
@@ -146,6 +160,28 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
         permission: req.permission,
         scopeData: { scope: AccessScope.Organization, orgId: req.permission.orgId },
         selector: { groupId: req.params.groupId }
+      });
+
+      // this endpoint is only possible in suborg
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        orgId: req.permission.orgId,
+        event: {
+          type: EventType.LINK_GROUP_TO_SUB_ORG,
+          metadata: {
+            groupId: req.params.groupId,
+            groupName: group.name,
+            roles: req.body.roles.map((r) => ({
+              role: r.role,
+              isTemporary: r.isTemporary,
+              ...(r.isTemporary && {
+                temporaryMode: r.temporaryMode,
+                temporaryRange: r.temporaryRange,
+                temporaryAccessStartTime: r.temporaryAccessStartTime
+              })
+            }))
+          }
+        }
       });
 
       return {
@@ -239,7 +275,7 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
       }
     },
     handler: async (req) => {
-      await server.services.membershipGroup.updateMembership({
+      const { group } = await server.services.membershipGroup.updateMembership({
         permission: req.permission,
         scopeData: { scope: AccessScope.Organization, orgId: req.permission.orgId },
         selector: { groupId: req.params.groupId },
@@ -250,6 +286,27 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
         permission: req.permission,
         scopeData: { scope: AccessScope.Organization, orgId: req.permission.orgId },
         selector: { groupId: req.params.groupId }
+      });
+
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        orgId: req.permission.orgId,
+        event: {
+          type: EventType.UPDATE_GROUP_ORG_MEMBERSHIP,
+          metadata: {
+            groupId: req.params.groupId,
+            groupName: group.name,
+            roles: req.body.roles.map((r) => ({
+              role: r.role,
+              isTemporary: r.isTemporary,
+              ...(r.isTemporary && {
+                temporaryMode: r.temporaryMode,
+                temporaryRange: r.temporaryRange,
+                temporaryAccessStartTime: r.temporaryAccessStartTime
+              })
+            }))
+          }
+        }
       });
 
       return {
@@ -292,10 +349,23 @@ export const registerOrganizationMembershipsRouter = async (server: FastifyZodPr
       }
     },
     handler: async (req) => {
-      const { membership } = await server.services.membershipGroup.deleteMembership({
+      const { membership, group } = await server.services.membershipGroup.deleteMembership({
         scopeData: { scope: AccessScope.Organization, orgId: req.permission.orgId },
         permission: req.permission,
         selector: { groupId: req.params.groupId }
+      });
+
+      // this endpoint is only possible in suborg
+      await server.services.auditLog.createAuditLog({
+        ...req.auditLogInfo,
+        orgId: req.permission.orgId,
+        event: {
+          type: EventType.UNLINK_GROUP_FROM_SUB_ORG,
+          metadata: {
+            groupId: req.params.groupId,
+            groupName: group.name
+          }
+        }
       });
 
       return {

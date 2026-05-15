@@ -3,6 +3,7 @@ import {
   AcmeAccountActor,
   AcmeProfileActor,
   EstAccountActor,
+  GatewayActor,
   IdentityActor,
   KmipClientActor,
   PlatformActor,
@@ -12,6 +13,7 @@ import {
   UnknownUserActor,
   UserActor
 } from "@app/ee/services/audit-log/audit-log-types";
+import { PamParentType } from "@app/ee/services/pam-account/pam-account-enums";
 import { SecretRotation } from "@app/ee/services/secret-rotation-v2/secret-rotation-v2-enums";
 import { EnforcementLevel, SecretSharingAccessType } from "@app/lib/types";
 import { AppConnection } from "@app/services/app-connection/app-connection-enums";
@@ -28,6 +30,7 @@ export enum PostHogEventTypes {
   SecretDeleted = "secrets deleted",
   AdminInit = "admin initialization",
   UserSignedUp = "User Signed Up",
+  UserLoginV2 = "User Login V2",
   SecretRotated = "secrets rotated",
   SecretScannerFull = "historical cloud secret scan",
   SecretScannerPush = "cloud secret scan",
@@ -102,7 +105,16 @@ export enum PostHogEventTypes {
   PamDiscoverySourceDeleted = "PAM Discovery Source Deleted",
   PamDiscoveryScanTriggered = "PAM Discovery Scan Triggered",
   PamRotationRuleCreated = "PAM Rotation Rule Created",
-  PamRotationRuleDeleted = "PAM Rotation Rule Deleted"
+  PamRotationRuleDeleted = "PAM Rotation Rule Deleted",
+
+  ResourceAuthMethodLogin = "Resource Auth Method Login",
+  ResourceAuthMethodUpdated = "Resource Auth Method Updated",
+
+  HoneyTokenCreated = "Honey Token Created",
+  HoneyTokenUpdated = "Honey Token Updated",
+  HoneyTokenRevoked = "Honey Token Revoked",
+  HoneyTokenReset = "Honey Token Reset",
+  HoneyTokenTriggered = "Honey Token Triggered"
 }
 
 export type TSecretModifiedEvent = {
@@ -132,7 +144,8 @@ export type TSecretModifiedEvent = {
       | AcmeProfileActor
       | KmipClientActor
       | EstAccountActor
-      | ScepAccountActor;
+      | ScepAccountActor
+      | GatewayActor;
   };
 };
 
@@ -152,6 +165,15 @@ export type TUserSignedUpEvent = {
     username: string;
     email: string;
     attributionSource?: string;
+    signupMethod?: string;
+  };
+};
+
+export type TUserLoginV2Event = {
+  event: PostHogEventTypes.UserLoginV2;
+  properties: {
+    email: string;
+    channel: string;
   };
 };
 
@@ -737,7 +759,7 @@ export type TPamResourceEvent = {
 export type TPamAccountEvent = {
   event: PostHogEventTypes.PamAccountCreated | PostHogEventTypes.PamAccountDeleted;
   properties: {
-    resourceType: string;
+    parentType: PamParentType;
     projectId: string;
   };
 };
@@ -754,7 +776,7 @@ export type TPamAccountAccessedEvent = {
 export type TPamAccountRotatedEvent = {
   event: PostHogEventTypes.PamAccountRotated;
   properties: {
-    resourceType: string;
+    parentType: PamParentType;
     projectId: string;
   };
 };
@@ -810,10 +832,80 @@ export type TPamRotationRuleDeletedEvent = {
   };
 };
 
-export type TPostHogEvent = { distinctId: string; organizationId?: string; organizationName?: string } & (
+export type TResourceAuthMethodEvent = {
+  event: PostHogEventTypes.ResourceAuthMethodLogin | PostHogEventTypes.ResourceAuthMethodUpdated;
+  properties: {
+    resourceType: "gateway";
+    resourceId: string;
+    orgId: string;
+    method: "aws" | "token";
+  };
+};
+
+export type THoneyTokenCreatedEvent = {
+  event: PostHogEventTypes.HoneyTokenCreated;
+  properties: {
+    honeyTokenId: string;
+    type: string;
+    projectId: string;
+    environment: string;
+    secretPath: string;
+  };
+};
+
+export type THoneyTokenUpdatedEvent = {
+  event: PostHogEventTypes.HoneyTokenUpdated;
+  properties: {
+    honeyTokenId: string;
+    type: string;
+    projectId: string;
+  };
+};
+
+export type THoneyTokenRevokedEvent = {
+  event: PostHogEventTypes.HoneyTokenRevoked;
+  properties: {
+    honeyTokenId: string;
+    type: string;
+    projectId: string;
+  };
+};
+
+export type THoneyTokenResetEvent = {
+  event: PostHogEventTypes.HoneyTokenReset;
+  properties: {
+    honeyTokenId: string;
+    type: string;
+    projectId: string;
+  };
+};
+
+export type THoneyTokenTriggeredEvent = {
+  event: PostHogEventTypes.HoneyTokenTriggered;
+  properties: {
+    type: string;
+  };
+};
+
+export type TPostHogEvent = {
+  distinctId: string;
+  organizationId?: string;
+  organizationName?: string;
+  /**
+   * When true, the event is captured without creating or updating a PostHog
+   * person record (`$process_person_profile: false`). Use for events fired
+   * from unauthenticated, single-shot interactions where the distinctId is
+   * synthesised per-request (e.g. anonymous public secret shares) and there
+   * is no real user/identity to attribute the event to. The event itself is
+   * still recorded so funnels and breakdowns continue to work — only the
+   * person record is suppressed.
+   */
+  anonymous?: boolean;
+} & (
   | TSecretModifiedEvent
   | TAdminInitEvent
   | TUserSignedUpEvent
+  | TUserLoginV2Event
   | TSecretScannerEvent
   | TUserOrgInvitedEvent
   | TMachineIdentityCreatedEvent
@@ -879,4 +971,10 @@ export type TPostHogEvent = { distinctId: string; organizationId?: string; organ
   | TPamDiscoveryEvent
   | TPamRotationRuleCreatedEvent
   | TPamRotationRuleDeletedEvent
+  | TResourceAuthMethodEvent
+  | THoneyTokenCreatedEvent
+  | THoneyTokenUpdatedEvent
+  | THoneyTokenRevokedEvent
+  | THoneyTokenResetEvent
+  | THoneyTokenTriggeredEvent
 );

@@ -5,6 +5,7 @@ import type WebSocket from "ws";
 
 import { ActionProjectType } from "@app/db/schemas";
 import { AuditLogInfo, EventType, TAuditLogServiceFactory } from "@app/ee/services/audit-log/audit-log-types";
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
 import { PamResource } from "@app/ee/services/pam-resource/pam-resource-enums";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
@@ -16,6 +17,8 @@ import { BadRequestError, NotFoundError, PolicyViolationError } from "@app/lib/e
 import { GatewayProxyProtocol } from "@app/lib/gateway/types";
 import { createGatewayConnection, createRelayConnection, setupRelayServer } from "@app/lib/gateway-v2/gateway-v2";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { TApprovalPolicyDALFactory } from "@app/services/approval-policy/approval-policy-dal";
 import { ApprovalPolicyType } from "@app/services/approval-policy/approval-policy-enums";
 import { APPROVAL_POLICY_FACTORY_MAP } from "@app/services/approval-policy/approval-policy-factory";
@@ -33,6 +36,9 @@ import { TUserDALFactory } from "@app/services/user/user-dal";
 
 import { TPamAccountDALFactory } from "../pam-account/pam-account-dal";
 import { decryptAccountCredentials } from "../pam-account/pam-account-fns";
+import { TPamAccountPolicyDALFactory } from "../pam-account-policy/pam-account-policy-dal";
+import { PamAccountPolicyRuleType } from "../pam-account-policy/pam-account-policy-enums";
+import { TPolicyRules } from "../pam-account-policy/pam-account-policy-types";
 import { TPamResourceDALFactory } from "../pam-resource/pam-resource-dal";
 import { decryptResourceConnectionDetails } from "../pam-resource/pam-resource-fns";
 import {
@@ -64,6 +70,7 @@ const SUPPORTED_WEB_ACCESS_RESOURCES = [PamResource.Postgres, PamResource.SSH, P
 
 type TPamWebAccessServiceFactoryDep = {
   pamAccountDAL: Pick<TPamAccountDALFactory, "findById" | "findMetadataByAccountIds">;
+  pamAccountPolicyDAL: Pick<TPamAccountPolicyDALFactory, "findById">;
   pamResourceDAL: Pick<TPamResourceDALFactory, "findById">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission">;
   auditLogService: Pick<TAuditLogServiceFactory, "createAuditLog">;
@@ -71,6 +78,7 @@ type TPamWebAccessServiceFactoryDep = {
   pamSessionDAL: Pick<TPamSessionDALFactory, "create" | "updateById" | "countActiveWebSessions">;
   pamSessionExpirationService: Pick<TPamSessionExpirationServiceFactory, "scheduleSessionExpiration">;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPAMConnectionDetails">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   userDAL: Pick<TUserDALFactory, "findById">;
   mfaSessionService: Pick<
@@ -98,9 +106,11 @@ type THandleWebSocketConnectionDTO = {
   actorName: string;
   actorIp: string;
   actorUserAgent: string;
+  reason?: string | null;
 };
 export const pamWebAccessServiceFactory = ({
   pamAccountDAL,
+  pamAccountPolicyDAL,
   pamResourceDAL,
   permissionService,
   auditLogService,
@@ -108,6 +118,7 @@ export const pamWebAccessServiceFactory = ({
   pamSessionDAL,
   pamSessionExpirationService,
   gatewayV2Service,
+  gatewayPoolService,
   kmsService,
   userDAL,
   mfaSessionService,
@@ -160,7 +171,8 @@ export const pamWebAccessServiceFactory = ({
     actorEmail,
     actorName,
     auditLogInfo,
-    mfaSessionId
+    mfaSessionId,
+    reason
   }: TIssueWebSocketTicketDTO) => {
     const account = await pamAccountDAL.findById(accountId);
 
@@ -170,6 +182,12 @@ export const pamWebAccessServiceFactory = ({
 
     if (account.projectId !== projectId) {
       throw new NotFoundError({ message: `Account with ID '${accountId}' not found` });
+    }
+
+    const trimmedReason = reason?.trim() || null;
+
+    if (!account.resourceId) {
+      throw new BadRequestError({ message: "Web access is only available for resource-backed accounts" });
     }
 
     const resource = await pamResourceDAL.findById(account.resourceId);
@@ -237,15 +255,32 @@ export const pamWebAccessServiceFactory = ({
       );
     }
 
+    // Reason check is intentionally placed after the approval/permission gates so
+    // its distinct error code does not leak policy configuration to unauthorized actors.
+    if (account.policyId) {
+      const policy = await pamAccountPolicyDAL.findById(account.policyId);
+      const policyRules = (policy?.rules ?? {}) as TPolicyRules;
+      if (policy?.isActive && policyRules[PamAccountPolicyRuleType.RequireReason] && !trimmedReason) {
+        throw new BadRequestError({
+          message: "A reason is required to access this account",
+          name: "PAM_REASON_REQUIRED"
+        });
+      }
+    }
+
     // MFA check
     if (account.requireMfa && !mfaSessionId) {
-      const project = await projectDAL.findById(account.projectId);
+      const project = await requestMemoize(requestMemoKeys.projectFindById(account.projectId), () =>
+        projectDAL.findById(account.projectId)
+      );
       if (!project) throw new NotFoundError({ message: `Project with ID '${account.projectId}' not found` });
 
-      const actorUser = await userDAL.findById(actor.id);
+      const actorUser = await requestMemoize(requestMemoKeys.userFindById(actor.id), () => userDAL.findById(actor.id));
       if (!actorUser) throw new NotFoundError({ message: `User with ID '${actor.id}' not found` });
 
-      const org = await orgDAL.findOrgById(project.orgId);
+      const org = await requestMemoize(requestMemoKeys.orgFindOrgById(project.orgId), () =>
+        orgDAL.findOrgById(project.orgId)
+      );
       if (!org) throw new NotFoundError({ message: `Organization with ID '${project.orgId}' not found` });
 
       // Determine which MFA method to use
@@ -295,7 +330,8 @@ export const pamWebAccessServiceFactory = ({
         accountName: account.name,
         actorEmail,
         actorName,
-        auditLogInfo
+        auditLogInfo,
+        reason: trimmedReason
       })
     });
 
@@ -328,7 +364,8 @@ export const pamWebAccessServiceFactory = ({
     actorEmail,
     actorName,
     actorIp,
-    actorUserAgent
+    actorUserAgent,
+    reason: accessReason
   }: THandleWebSocketConnectionDTO): Promise<void> => {
     let session: { id: string } | null = null;
     let cleanedUp = false;
@@ -420,6 +457,10 @@ export const pamWebAccessServiceFactory = ({
         throw new BadRequestError({ message: "Invalid account or project" });
       }
 
+      if (!account.resourceId) {
+        throw new BadRequestError({ message: "Web access is only available for resource-backed accounts" });
+      }
+
       const resource = await pamResourceDAL.findById(account.resourceId);
       if (!resource) {
         throw new BadRequestError({ message: "Resource not found" });
@@ -429,7 +470,11 @@ export const pamWebAccessServiceFactory = ({
         throw new BadRequestError({ message: "Web access is not supported for this resource type" });
       }
 
-      if (!resource.gatewayId) {
+      const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId({
+        gatewayId: resource.gatewayId,
+        gatewayPoolId: resource.gatewayPoolId
+      });
+      if (!effectiveGatewayId) {
         throw new BadRequestError({ message: "Gateway not configured for this resource" });
       }
 
@@ -459,7 +504,7 @@ export const pamWebAccessServiceFactory = ({
       });
 
       // 3. CREATE SESSION
-      const user = await userDAL.findById(userId);
+      const user = await requestMemoize(requestMemoKeys.userFindById(userId), () => userDAL.findById(userId));
       const expiresAt = new Date(Date.now() + DEFAULT_WEB_SESSION_DURATION_MS);
 
       session = await pamSessionDAL.create({
@@ -476,14 +521,16 @@ export const pamWebAccessServiceFactory = ({
         resourceType: resource.resourceType,
         accountId: account.id,
         resourceId: resource.id,
-        userId
+        userId,
+        gatewayId: effectiveGatewayId,
+        reason: accessReason?.trim() || null
       });
 
       await pamSessionExpirationService.scheduleSessionExpiration(session.id, expiresAt);
 
       // 4. GET CERTIFICATES
       const certs = await gatewayV2Service.getPAMConnectionDetails({
-        gatewayId: resource.gatewayId,
+        gatewayId: effectiveGatewayId,
         sessionId: session.id,
         resourceType: resource.resourceType as PamResource,
         host,
@@ -578,7 +625,8 @@ export const pamWebAccessServiceFactory = ({
             accountId,
             resourceName,
             accountName,
-            duration: expiresAt.toISOString()
+            duration: expiresAt.toISOString(),
+            reason: accessReason ?? undefined
           }
         }
       });

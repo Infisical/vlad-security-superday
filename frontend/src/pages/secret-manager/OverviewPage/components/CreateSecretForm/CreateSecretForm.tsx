@@ -9,16 +9,16 @@ import { z } from "zod";
 import { createNotification } from "@app/components/notifications";
 import {
   Button,
+  IconButton,
   InfisicalSecretInput,
+  Input,
   PasswordGenerator,
   SheetFooter,
   Switch,
   TextArea,
   Tooltip,
   TooltipContent,
-  TooltipTrigger,
-  UnstableIconButton,
-  UnstableInput
+  TooltipTrigger
 } from "@app/components/v3";
 import {
   Field,
@@ -153,9 +153,7 @@ export const CreateSecretForm = ({
   const [createMore, setCreateMore] = useState(false);
   const secretKeyInputRef = useRef<HTMLInputElement>(null);
   const secretKey = watch("key");
-  const selectedEnvironments = defaultSelectedEnvs?.length
-    ? defaultSelectedEnvs
-    : watch("environments");
+  const selectedEnvironments = watch("environments");
 
   const handleFormSubmit = async ({
     key,
@@ -331,40 +329,38 @@ export const CreateSecretForm = ({
       className="flex flex-1 flex-col gap-4 overflow-hidden"
     >
       <div className="flex thin-scrollbar flex-1 flex-col gap-4 overflow-y-auto p-4">
-        {defaultSelectedEnvs?.length === 1 ? null : (
-          <Controller
-            control={control}
-            name="environments"
-            render={({ field: { value, onChange }, fieldState: { error } }) => (
-              <Field>
-                <FieldLabel>Environments</FieldLabel>
-                <FieldContent>
-                  <FilterableSelect
-                    isMulti
-                    isError={Boolean(error)}
-                    options={environments.filter((environment) =>
-                      permission.can(
-                        ProjectPermissionSecretActions.Create,
-                        subject(ProjectPermissionSub.Secrets, {
-                          environment: environment.slug,
-                          secretPath,
-                          secretName: "*",
-                          secretTags: ["*"]
-                        })
-                      )
-                    )}
-                    value={value}
-                    onChange={onChange}
-                    placeholder="Select environments to create secret in..."
-                    getOptionLabel={(option) => option.name}
-                    getOptionValue={(option) => option.slug}
-                  />
-                  <FieldError errors={[error]} />
-                </FieldContent>
-              </Field>
-            )}
-          />
-        )}
+        <Controller
+          control={control}
+          name="environments"
+          render={({ field: { value, onChange }, fieldState: { error } }) => (
+            <Field>
+              <FieldLabel>Environments</FieldLabel>
+              <FieldContent>
+                <FilterableSelect
+                  isMulti
+                  isError={Boolean(error)}
+                  options={environments.filter((environment) =>
+                    permission.can(
+                      ProjectPermissionSecretActions.Create,
+                      subject(ProjectPermissionSub.Secrets, {
+                        environment: environment.slug,
+                        secretPath,
+                        secretName: "*",
+                        secretTags: ["*"]
+                      })
+                    )
+                  )}
+                  value={value}
+                  onChange={onChange}
+                  placeholder="Select environments to create secret in..."
+                  getOptionLabel={(option) => option.name}
+                  getOptionValue={(option) => option.slug}
+                />
+                <FieldError errors={[error]} />
+              </FieldContent>
+            </Field>
+          )}
+        />
 
         <Controller
           control={control}
@@ -374,7 +370,7 @@ export const CreateSecretForm = ({
               <FieldLabel>Key</FieldLabel>
               <FieldContent>
                 <div className="relative">
-                  <UnstableInput
+                  <Input
                     ref={secretKeyInputRef}
                     value={field.value ?? ""}
                     onChange={(e) => {
@@ -538,7 +534,7 @@ export const CreateSecretForm = ({
                       name={`metadata.${index}.key`}
                       render={({ field: inputField, fieldState: { error } }) => (
                         <>
-                          <UnstableInput {...inputField} placeholder="Enter key" className="h-8" />
+                          <Input {...inputField} placeholder="Enter key" className="h-8" />
                           <FieldError errors={[error]} />
                         </>
                       )}
@@ -554,11 +550,7 @@ export const CreateSecretForm = ({
                       name={`metadata.${index}.value`}
                       render={({ field: inputField, fieldState: { error } }) => (
                         <>
-                          <UnstableInput
-                            {...inputField}
-                            placeholder="Enter value"
-                            className="h-8"
-                          />
+                          <Input {...inputField} placeholder="Enter value" className="h-8" />
                           <FieldError errors={[error]} />
                         </>
                       )}
@@ -583,7 +575,7 @@ export const CreateSecretForm = ({
                   />
                 </Field>
 
-                <UnstableIconButton
+                <IconButton
                   variant="ghost"
                   size="xs"
                   type="button"
@@ -594,7 +586,7 @@ export const CreateSecretForm = ({
                   onClick={() => removeMetadata(index)}
                 >
                   <TrashIcon className="size-4" />
-                </UnstableIconButton>
+                </IconButton>
               </div>
             ))}
           </div>

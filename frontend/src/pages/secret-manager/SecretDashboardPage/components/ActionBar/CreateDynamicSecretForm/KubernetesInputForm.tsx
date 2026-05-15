@@ -3,7 +3,6 @@ import { Controller, FieldValues, useFieldArray, useForm } from "react-hook-form
 import { faQuestionCircle, faTrash } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import ms from "ms";
 import { z } from "zod";
 
@@ -22,9 +21,10 @@ import {
   TextArea,
   Tooltip
 } from "@app/components/v2";
+import { GatewayPicker } from "@app/components/v3/platform/GatewayPicker";
 import { OrgPermissionSubjects } from "@app/context/OrgPermissionContext";
 import { OrgGatewayPermissionActions } from "@app/context/OrgPermissionContext/types";
-import { gatewaysQueryKeys, useCreateDynamicSecret } from "@app/hooks/api";
+import { useCreateDynamicSecret } from "@app/hooks/api";
 import {
   DynamicSecretProviders,
   KubernetesDynamicSecretCredentialType
@@ -65,6 +65,7 @@ const formSchema = z
         clusterToken: z.string().trim().optional(),
         ca: z.string().optional(),
         sslEnabled: z.boolean().default(false),
+        sslRejectUnauthorized: z.boolean().default(true),
         credentialType: z.literal(KubernetesDynamicSecretCredentialType.Static),
         serviceAccountName: z.string().trim().min(1),
         namespace: z
@@ -76,6 +77,7 @@ const formSchema = z
             "Namespace must be a single value, not a comma-separated list"
           ),
         gatewayId: z.string().optional(),
+        gatewayPoolId: z.string().optional(),
         audiences: z.array(z.string().trim().min(1)),
         authMethod: z.nativeEnum(AuthMethod).default(AuthMethod.Api)
       }),
@@ -84,6 +86,7 @@ const formSchema = z
         clusterToken: z.string().trim().optional(),
         ca: z.string().optional(),
         sslEnabled: z.boolean().default(false),
+        sslRejectUnauthorized: z.boolean().default(true),
         credentialType: z.literal(KubernetesDynamicSecretCredentialType.Dynamic),
         namespace: z
           .string()
@@ -94,6 +97,7 @@ const formSchema = z
             return namespaces.length > 0 && namespaces.every((ns) => ns.length > 0);
           }, "Must be a valid comma-separated list of namespace values"),
         gatewayId: z.string().optional(),
+        gatewayPoolId: z.string().optional(),
         audiences: z.array(z.string().trim().min(1)),
         roleType: z.nativeEnum(RoleType),
         role: z.string().trim().min(1),
@@ -123,11 +127,15 @@ const formSchema = z
     usernameTemplate: z.string().trim().optional()
   })
   .superRefine((data, ctx) => {
-    if (data.provider.authMethod === AuthMethod.Gateway && !data.provider.gatewayId) {
+    if (
+      data.provider.authMethod === AuthMethod.Gateway &&
+      !data.provider.gatewayId &&
+      !data.provider.gatewayPoolId
+    ) {
       ctx.addIssue({
         path: ["provider.gatewayId"],
         code: z.ZodIssueCode.custom,
-        message: "When auth method is set to Gateway, a gateway must be selected"
+        message: "When auth method is set to Gateway, a gateway or gateway pool must be selected"
       });
     }
     if (data.provider.authMethod === AuthMethod.Api) {
@@ -183,6 +191,7 @@ export const KubernetesInputForm = ({
         clusterToken: "",
         ca: "",
         sslEnabled: false,
+        sslRejectUnauthorized: true,
         serviceAccountName: "",
         namespace: "",
         credentialType: KubernetesDynamicSecretCredentialType.Static,
@@ -200,7 +209,8 @@ export const KubernetesInputForm = ({
   });
 
   const createDynamicSecret = useCreateDynamicSecret();
-  const { data: gateways, isPending: isGatewaysLoading } = useQuery(gatewaysQueryKeys.list());
+  const providerGatewayId = watch("provider.gatewayId");
+  const providerGatewayPoolId = watch("provider.gatewayPoolId");
 
   const sslEnabled = watch("provider.sslEnabled");
   const credentialType = watch("provider.credentialType");
@@ -367,48 +377,30 @@ export const KubernetesInputForm = ({
                     a={OrgPermissionSubjects.Gateway}
                   >
                     {(isAllowed) => (
-                      <Controller
-                        control={control}
-                        name="provider.gatewayId"
-                        defaultValue=""
-                        render={({ field: { value, onChange }, fieldState: { error } }) => (
-                          <FormControl
-                            isError={Boolean(error?.message)}
-                            errorText={error?.message}
-                            label="Gateway"
-                          >
-                            <Tooltip
-                              isDisabled={isAllowed}
-                              content="Restricted access. You don't have permission to attach gateways to resources."
-                            >
-                              <div>
-                                <Select
-                                  isDisabled={!isAllowed}
-                                  value={value}
-                                  onValueChange={onChange}
-                                  className="w-full border border-mineshaft-500"
-                                  dropdownContainerClassName="max-w-none"
-                                  isLoading={isGatewaysLoading}
-                                  placeholder="Default: Internet Gateway"
-                                  position="popper"
-                                >
-                                  <SelectItem
-                                    value={null as unknown as string}
-                                    onClick={() => onChange(undefined)}
-                                  >
-                                    Internet Gateway
-                                  </SelectItem>
-                                  {gateways?.map((el) => (
-                                    <SelectItem value={el.id} key={el.id}>
-                                      {el.name}
-                                    </SelectItem>
-                                  ))}
-                                </Select>
-                              </div>
-                            </Tooltip>
-                          </FormControl>
-                        )}
-                      />
+                      <FormControl label="Gateway">
+                        <Tooltip
+                          isDisabled={isAllowed}
+                          content="Restricted access. You don't have permission to attach gateways to resources."
+                        >
+                          <div>
+                            <GatewayPicker
+                              isDisabled={!isAllowed}
+                              value={{
+                                gatewayId: providerGatewayId ?? null,
+                                gatewayPoolId: providerGatewayPoolId ?? null
+                              }}
+                              onChange={({ gatewayId: newGwId, gatewayPoolId: newPoolId }) => {
+                                setValue("provider.gatewayId", newGwId ?? undefined, {
+                                  shouldDirty: true
+                                });
+                                setValue("provider.gatewayPoolId", newPoolId ?? undefined, {
+                                  shouldDirty: true
+                                });
+                              }}
+                            />
+                          </div>
+                        </Tooltip>
+                      </FormControl>
                     )}
                   </OrgPermissionCan>
                 </div>
@@ -496,6 +488,41 @@ export const KubernetesInputForm = ({
                             placeholder="-----BEGIN CERTIFICATE----- ..."
                             isDisabled={!sslEnabled}
                           />
+                        </FormControl>
+                      )}
+                    />
+                    <Controller
+                      name="provider.sslRejectUnauthorized"
+                      control={control}
+                      render={({ field: { value, onChange }, fieldState: { error } }) => (
+                        <FormControl isError={Boolean(error?.message)} errorText={error?.message}>
+                          <Switch
+                            className="bg-mineshaft-400/50 shadow-inner data-[state=checked]:bg-green/80"
+                            id="ssl-reject-unauthorized"
+                            thumbClassName="bg-mineshaft-800"
+                            isChecked={value}
+                            onCheckedChange={onChange}
+                          >
+                            <p className="w-full">
+                              SSL Reject Unauthorized
+                              <Tooltip
+                                className="max-w-md"
+                                content={
+                                  <p>
+                                    If enabled, the server certificate will be verified against the
+                                    list of supplied CAs. Disable this option if you are using a
+                                    self-signed certificate.
+                                  </p>
+                                }
+                              >
+                                <FontAwesomeIcon
+                                  icon={faQuestionCircle}
+                                  size="sm"
+                                  className="ml-1"
+                                />
+                              </Tooltip>
+                            </p>
+                          </Switch>
                         </FormControl>
                       )}
                     />

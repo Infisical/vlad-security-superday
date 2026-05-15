@@ -7,7 +7,7 @@ import { TServiceTokens, TUsers } from "@app/db/schemas";
 import { TScimTokenJwtPayload } from "@app/ee/services/scim/scim-types";
 import { getConfig } from "@app/lib/config/env";
 import { crypto } from "@app/lib/crypto";
-import { BadRequestError } from "@app/lib/errors";
+import { BadRequestError, UnauthorizedError } from "@app/lib/errors";
 import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
 import {
   ActorType,
@@ -15,7 +15,8 @@ import {
   AuthMode,
   AuthModeJwtTokenPayload,
   AuthTokenType,
-  MfaMethod
+  MfaMethod,
+  TGatewayAccessTokenJwtPayload
 } from "@app/services/auth/auth-type";
 import { TIdentityAccessTokenJwtPayload } from "@app/services/identity-access-token/identity-access-token-types";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
@@ -77,6 +78,16 @@ export type TAuthMode =
       rootOrgId: string;
       parentOrgId: string;
       authMethod: null;
+    }
+  | {
+      authMode: AuthMode.GATEWAY_ACCESS_TOKEN;
+      actor: ActorType.GATEWAY;
+      gatewayId: string;
+      orgId: string;
+      rootOrgId: string;
+      parentOrgId: string;
+      authMethod: null;
+      token: TGatewayAccessTokenJwtPayload;
     };
 
 export const extractAuth = async (req: FastifyRequest, jwtSecret: string) => {
@@ -129,6 +140,12 @@ export const extractAuth = async (req: FastifyRequest, jwtSecret: string) => {
         token: decodedToken as TScimTokenJwtPayload,
         actor: ActorType.SCIM_CLIENT
       } as const;
+    case AuthTokenType.GATEWAY_ACCESS_TOKEN:
+      return {
+        authMode: AuthMode.GATEWAY_ACCESS_TOKEN,
+        token: decodedToken as TGatewayAccessTokenJwtPayload,
+        actor: ActorType.GATEWAY
+      } as const;
     default:
       return { authMode: null, token: null } as const;
   }
@@ -159,30 +176,42 @@ export const injectIdentity = fp(
         return;
       }
 
+      // Match against the pathname only — req.url includes the query string, which a
+      // client can use to smuggle matching substrings and skip auth injection.
+      const pathname = req.url.split("?", 1)[0];
+
       if (
-        req.url.includes(".well-known/est") ||
-        req.url.includes("/scep/") ||
-        (req.url.includes("/api/v3/auth/") && !req.url.includes("/api/v3/auth/select-organization"))
+        pathname.startsWith("/.well-known/est") ||
+        (pathname.startsWith("/api/v3/auth/") && !pathname.startsWith("/api/v3/auth/select-organization"))
       ) {
         return;
       }
 
-      if (req.url === "/api/v1/ai/mcp/servers/oauth/callback") {
+      if (pathname.includes("/scep/") && pathname.includes("pkiclient.exe")) {
+        return;
+      }
+
+      if (pathname === "/api/v1/ai/mcp/servers/oauth/callback") {
         return;
       }
 
       // Authentication is handled on a route-level
-      if (req.url === "/api/v1/relays/register-instance-relay") {
+      if (pathname === "/api/v1/relays/register-instance-relay") {
+        return;
+      }
+
+      // Authentication is handled on a route-level (enrollment token in body)
+      if (pathname === "/api/v3/gateways/token-auth/enroll") {
         return;
       }
 
       // Authentication is handled on a route-level
-      if (req.url === "/api/v1/relays/heartbeat-instance-relay") {
+      if (pathname === "/api/v1/relays/heartbeat-instance-relay") {
         return;
       }
 
       // Authentication is handled on a route-level here.
-      if (req.url.includes("/api/v1/workflow-integrations/microsoft-teams/message-endpoint")) {
+      if (pathname.startsWith("/api/v1/workflow-integrations/microsoft-teams/message-endpoint")) {
         return;
       }
 
@@ -237,7 +266,10 @@ export const injectIdentity = fp(
           break;
         }
         case AuthMode.IDENTITY_ACCESS_TOKEN: {
-          const identity = await server.services.identityAccessToken.fnValidateIdentityAccessToken(token, req.realIp);
+          const identity = await server.services.identityAccessToken.fnValidateIdentityAccessTokenFast(
+            token,
+            req.realIp
+          );
           const serverCfg = await getServerCfg();
           requestContext.set(RequestContextKey.OrgId, identity.orgId);
           requestContext.set(RequestContextKey.OrgName, identity.orgName);
@@ -318,6 +350,27 @@ export const injectIdentity = fp(
             // scim cannot be done for sub organization
             rootOrgId: orgId,
             parentOrgId: orgId
+          };
+          break;
+        }
+        case AuthMode.GATEWAY_ACCESS_TOKEN: {
+          const gateway = await server.services.gatewayV2.getGatewayById({ gatewayId: token.gatewayId });
+
+          if (gateway.tokenVersion !== token.tokenVersion) {
+            throw new UnauthorizedError({ message: "Gateway token has been revoked" });
+          }
+
+          requestContext.set(RequestContextKey.OrgId, token.orgId);
+
+          req.auth = {
+            authMode: AuthMode.GATEWAY_ACCESS_TOKEN,
+            actor,
+            gatewayId: token.gatewayId,
+            orgId: token.orgId,
+            rootOrgId: token.orgId,
+            parentOrgId: token.orgId,
+            authMethod: null,
+            token
           };
           break;
         }

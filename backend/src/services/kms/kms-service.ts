@@ -21,6 +21,8 @@ import { AsymmetricKeyAlgorithm, signingService } from "@app/lib/crypto/sign";
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import {
   getByteLengthForSymmetricEncryptionAlgorithm,
   KMS_ROOT_CONFIG_UUID,
@@ -43,6 +45,7 @@ import {
   TEncryptWithKmsDataKeyDTO,
   TEncryptWithKmsDTO,
   TGenerateKMSDTO,
+  TGetBulkKeyMaterialDTO,
   TGetKeyMaterialDTO,
   TGetPublicKeyDTO,
   TImportKeyMaterialDTO,
@@ -379,12 +382,49 @@ export const kmsServiceFactory = ({
     return kmsKey;
   };
 
+  const getBulkKeyMaterial = async ({ kmsIds }: TGetBulkKeyMaterialDTO) => {
+    const kmsDocs = await kmsDAL.findByIdsWithAssociatedKms(kmsIds);
+
+    return kmsDocs.map((kmsDoc) => {
+      if (kmsDoc.isReserved) {
+        throw new BadRequestError({ message: `Cannot get key material for reserved key [kmsId=${kmsDoc.id}]` });
+      }
+      if (kmsDoc.externalKms) {
+        throw new BadRequestError({ message: `Cannot get key material for external key [kmsId=${kmsDoc.id}]` });
+      }
+
+      const keyCipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
+      const keyMaterial = keyCipher.decrypt(kmsDoc.internalKms?.encryptedKey as Buffer, ROOT_ENCRYPTION_KEY);
+
+      return { kmsId: kmsDoc.id, name: kmsDoc.name, keyMaterial };
+    });
+  };
+
   const importKeyMaterial = async (
     { key, algorithm, name, isReserved, projectId, orgId, keyUsage, kmipMetadata }: TImportKeyMaterialDTO,
     tx?: Knex
   ) => {
-    // daniel: currently we only support imports for encrypt/decrypt keys
-    verifyKeyTypeAndAlgorithm(keyUsage, algorithm, { forceType: KmsKeyUsage.ENCRYPT_DECRYPT });
+    verifyKeyTypeAndAlgorithm(keyUsage, algorithm);
+
+    if (keyUsage === KmsKeyUsage.ENCRYPT_DECRYPT) {
+      const expectedLength = getByteLengthForSymmetricEncryptionAlgorithm(algorithm as SymmetricKeyAlgorithm);
+      if (key.length !== expectedLength) {
+        throw new BadRequestError({
+          message: `Invalid key material length for ${algorithm}. Expected ${expectedLength} bytes, got ${key.length}.`
+        });
+      }
+    }
+
+    if (keyUsage === KmsKeyUsage.SIGN_VERIFY) {
+      const { getPublicKeyFromPrivateKey } = signingService(algorithm as AsymmetricKeyAlgorithm);
+      try {
+        getPublicKeyFromPrivateKey(key);
+      } catch {
+        throw new BadRequestError({
+          message: "Invalid private key material. Expected a PKCS8 PEM-encoded private key."
+        });
+      }
+    }
 
     const cipher = symmetricCipherService(SymmetricKeyAlgorithm.AES_GCM_256);
 
@@ -394,7 +434,7 @@ export const kmsServiceFactory = ({
       const kmsDoc = await kmsDAL.create(
         {
           name: sanitizedName,
-          keyUsage: KmsKeyUsage.ENCRYPT_DECRYPT,
+          keyUsage,
           orgId,
           isReserved,
           projectId,
@@ -899,7 +939,9 @@ export const kmsServiceFactory = ({
   };
 
   const getProjectKeyBackup = async (projectId: string) => {
-    const project = await projectDAL.findById(projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(projectId), () =>
+      projectDAL.findById(projectId)
+    );
     if (!project) {
       throw new NotFoundError({
         message: `Project with ID '${projectId}' not found`
@@ -952,6 +994,12 @@ export const kmsServiceFactory = ({
         message: "Backup does not belong to project"
       });
     }
+
+    const kmsDoc = await kmsDAL.findByIdWithAssociatedKms(backupKmsKeyId);
+    if (kmsDoc.orgId !== project.orgId)
+      throw new ForbiddenRequestError({
+        message: "Backup does not belong to project"
+      });
 
     const kmsDecryptor = await decryptWithKmsKey({ kmsId: backupKmsKeyId });
     const dataKey = await kmsDecryptor({
@@ -1085,6 +1133,7 @@ export const kmsServiceFactory = ({
     getKmsById,
     createCipherPairWithDataKey,
     getKeyMaterial,
+    getBulkKeyMaterial,
     importKeyMaterial,
     signWithKmsKey,
     verifyWithKmsKey,

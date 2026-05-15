@@ -5,26 +5,26 @@ import {
   PamResourceOrderBy,
   PamResourceType,
   PamSessionStatus,
-  TerminalChannelType
+  SessionChannelType
 } from "../enums";
-import { TActiveDirectoryAccount, TActiveDirectoryResource } from "./active-directory-resource";
 import { TAwsIamAccount, TAwsIamResource } from "./aws-iam-resource";
 import { TSessionSummaryConfig } from "./base-resource";
 import { TKubernetesAccount, TKubernetesResource } from "./kubernetes-resource";
 import { TMongoDBAccount, TMongoDBResource } from "./mongodb-resource";
 import { TMsSQLAccount, TMsSQLResource } from "./mssql-resource";
 import { TMySQLAccount, TMySQLResource } from "./mysql-resource";
+import { TOracleDBAccount, TOracleDBResource } from "./oracledb-resource";
 import { TPostgresAccount, TPostgresResource } from "./postgres-resource";
 import { TRedisAccount, TRedisResource } from "./redis-resource";
 import { TSSHAccount, TSSHResource } from "./ssh-resource";
 import { TWindowsAccount, TWindowsResource } from "./windows-server-resource";
 
-export * from "./active-directory-resource";
 export * from "./aws-iam-resource";
 export * from "./kubernetes-resource";
 export * from "./mongodb-resource";
 export * from "./mssql-resource";
 export * from "./mysql-resource";
+export * from "./oracledb-resource";
 export * from "./postgres-resource";
 export * from "./redis-resource";
 export * from "./ssh-resource";
@@ -40,7 +40,7 @@ export type TPamResource =
   | TAwsIamResource
   | TKubernetesResource
   | TWindowsResource
-  | TActiveDirectoryResource;
+  | TOracleDBResource;
 
 export type TPamAccount =
   | TPostgresAccount
@@ -52,7 +52,7 @@ export type TPamAccount =
   | TAwsIamAccount
   | TKubernetesAccount
   | TWindowsAccount
-  | TActiveDirectoryAccount;
+  | TOracleDBAccount;
 
 export type TPamFolder = {
   id: string;
@@ -71,10 +71,10 @@ export type TPamCommandLog = {
   timestamp: string;
 };
 
-export type TTerminalEvent = {
+export type TSessionEvent = {
   timestamp: string;
   eventType: "input" | "output" | "resize" | "error";
-  channelType?: TerminalChannelType; // Optional for backwards compatibility with existing logs
+  channelType?: SessionChannelType; // Optional for backwards compatibility with existing logs
   data: string; // Base64 encoded binary data
   elapsedTime: number; // Seconds since session start (for replay)
 };
@@ -100,7 +100,7 @@ export type THttpResponseEvent = {
 
 export type THttpEvent = THttpRequestEvent | THttpResponseEvent;
 
-export type TPamSessionLog = TPamCommandLog | TTerminalEvent | THttpEvent;
+export type TPamSessionLog = TPamCommandLog | TSessionEvent | THttpEvent;
 
 export type TPamSessionAiInsights = {
   summary: string;
@@ -126,11 +126,12 @@ export type TPamSession = {
   endedAt?: string | null;
   createdAt: string;
   updatedAt: string;
-  logs: TPamSessionLog[];
   gatewayIdentityId?: string | null;
+  gatewayId?: string | null;
   aiInsightsStatus?: string | null;
   aiInsightsError?: string | null;
   aiInsights?: TPamSessionAiInsights | null;
+  reason?: string | null;
 };
 
 // Resource DTOs
@@ -147,20 +148,22 @@ export type TListPamResourcesDTO = {
 
 export type TCreatePamResourceDTO = Pick<
   TPamResource,
-  "name" | "connectionDetails" | "resourceType" | "gatewayId" | "projectId"
+  "name" | "connectionDetails" | "resourceType" | "projectId"
 > & {
-  adServerResourceId?: string | null;
+  gatewayId?: string;
+  gatewayPoolId?: string;
+  domainId?: string | null;
   metadata?: { key: string; value: string }[];
 };
 
 export type { TSessionSummaryConfig };
 
-export type TUpdatePamResourceDTO = Partial<
-  Pick<TPamResource, "name" | "connectionDetails" | "gatewayId">
-> & {
+export type TUpdatePamResourceDTO = Partial<Pick<TPamResource, "name" | "connectionDetails">> & {
   resourceId: string;
   resourceType: PamResourceType;
-  adServerResourceId?: string | null;
+  gatewayId?: string;
+  gatewayPoolId?: string;
+  domainId?: string | null;
   metadata?: { key: string; value: string }[];
   rotationAccountCredentials?: { username: string; password: string } | null;
   sessionSummaryConfig?: TSessionSummaryConfig;
@@ -181,6 +184,7 @@ export type TListPamAccountsDTO = {
   orderDirection?: OrderByDirection;
   search?: string;
   filterResourceIds?: string;
+  filterDomainIds?: string;
   metadataFilter?: Array<{ key: string; value?: string }>;
 };
 
@@ -188,7 +192,8 @@ export type TCreatePamAccountDTO = Pick<
   TPamAccount,
   "name" | "description" | "credentials" | "projectId" | "resourceId" | "folderId" | "requireMfa"
 > & {
-  resourceType: PamResourceType;
+  parentType: string;
+  domainId?: string;
   internalMetadata?: Record<string, unknown>;
   metadata?: { key: string; value: string }[];
   policyId?: string | null;
@@ -198,7 +203,7 @@ export type TUpdatePamAccountDTO = Partial<
   Pick<TPamAccount, "name" | "description" | "credentials" | "requireMfa">
 > & {
   accountId: string;
-  resourceType: PamResourceType;
+  parentType: string;
   internalMetadata?: Record<string, unknown>;
   metadata?: { key: string; value: string }[];
   policyId?: string | null;
@@ -206,7 +211,7 @@ export type TUpdatePamAccountDTO = Partial<
 
 export type TDeletePamAccountDTO = {
   accountId: string;
-  resourceType: PamResourceType;
+  parentType: string;
 };
 
 // Folder DTOs
@@ -294,11 +299,12 @@ export type TPamSessionLogsPage = {
 // Account Policy types
 export enum PamAccountPolicyRuleType {
   CommandBlocking = "command-blocking",
-  SessionLogMasking = "session-log-masking"
+  SessionLogMasking = "session-log-masking",
+  RequireReason = "require-reason"
 }
 
 export type TPamAccountPolicyRuleConfig = {
-  patterns: string[];
+  patterns?: string[];
 };
 
 export type TPamAccountPolicyRules = Partial<

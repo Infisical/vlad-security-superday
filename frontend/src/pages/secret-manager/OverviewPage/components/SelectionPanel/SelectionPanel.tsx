@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { subject } from "@casl/ability";
-import { FolderInputIcon, TrashIcon } from "lucide-react";
+import { FolderInputIcon, TagsIcon, TrashIcon } from "lucide-react";
 import { twMerge } from "tailwind-merge";
 
 import { createNotification } from "@app/components/notifications";
@@ -16,8 +16,10 @@ import { ProjectPermissionSecretActions } from "@app/context/ProjectPermissionCo
 import { usePopUp } from "@app/hooks";
 import { useDeleteSecretBatch } from "@app/hooks/api";
 import { ProjectSecretsImportedBy, UsedBySecretSyncs } from "@app/hooks/api/dashboard/types";
+import { TDashboardHoneyToken } from "@app/hooks/api/honeyTokens/types";
 import { ProjectEnv } from "@app/hooks/api/projects/types";
 import { PendingAction } from "@app/hooks/api/secretFolders/types";
+import { TSecretRotationV2 } from "@app/hooks/api/secretRotationsV2";
 import { useCreateCommit } from "@app/hooks/api/secrets/mutations";
 import {
   SecretType,
@@ -27,12 +29,15 @@ import {
 } from "@app/hooks/api/types";
 import {
   BulkDeleteDialog,
+  BulkTagDialog,
   MoveSecretsModal
 } from "@app/pages/secret-manager/OverviewPage/components/SelectionPanel/components";
 
 export enum EntryType {
   FOLDER = "folder",
-  SECRET = "secret"
+  SECRET = "secret",
+  SECRET_ROTATION = "secretRotation",
+  HONEY_TOKEN = "honeyToken"
 }
 
 type Props = {
@@ -41,6 +46,8 @@ type Props = {
   selectedEntries: {
     [EntryType.FOLDER]: Record<string, Record<string, TSecretFolder>>;
     [EntryType.SECRET]: Record<string, Record<string, SecretV3RawSanitized>>;
+    [EntryType.SECRET_ROTATION]: Record<string, Record<string, TSecretRotationV2>>;
+    [EntryType.HONEY_TOKEN]: Record<string, Record<string, TDashboardHoneyToken>>;
   };
   importedBy?: ProjectSecretsImportedBy[] | null;
   usedBySecretSyncs?: UsedBySecretSyncs[];
@@ -62,15 +69,23 @@ export const SelectionPanel = ({
 
   const { handlePopUpOpen, handlePopUpToggle, handlePopUpClose, popUp } = usePopUp([
     "bulkDeleteEntries",
-    "bulkMoveSecrets"
+    "bulkMoveSecrets",
+    "bulkTagSecrets"
   ] as const);
 
   const selectedFolderCount = Object.keys(selectedEntries.folder).length;
   const selectedKeysCount = Object.keys(selectedEntries.secret).length;
-  const isRotatedSecretSelected = Object.values(selectedEntries.secret).some((record) =>
-    Object.values(record).some((secret) => secret.isRotatedSecret)
+  const selectedRotationCount = Object.keys(selectedEntries.secretRotation).length;
+  const selectedHoneyTokenCount = Object.keys(selectedEntries.honeyToken).length;
+  const isManagedSecretSelected = Object.values(selectedEntries.secret).some((record) =>
+    Object.values(record).some((secret) => secret.isRotatedSecret || secret.isHoneyTokenSecret)
   );
-  const selectedCount = selectedFolderCount + selectedKeysCount;
+  const isHoneyTokenSelected = Object.values(selectedEntries.secret).some((record) =>
+    Object.values(record).some((secret) => secret.isHoneyTokenSecret)
+  );
+
+  const selectedCount =
+    selectedFolderCount + selectedKeysCount + selectedRotationCount + selectedHoneyTokenCount;
 
   const { currentProject, projectId } = useProject();
   const userAvailableEnvs = currentProject?.environments || [];
@@ -91,6 +106,20 @@ export const SelectionPanel = ({
       })
     )
   );
+
+  const canEditSecretsInAnyEnv = userAvailableEnvs.some((env) =>
+    permission.can(
+      ProjectPermissionSecretActions.Edit,
+      subject(ProjectPermissionSub.Secrets, {
+        environment: env.slug,
+        secretPath,
+        secretName: "*",
+        secretTags: ["*"]
+      })
+    )
+  );
+  const canReadTags = permission.can(ProjectPermissionActions.Read, ProjectPermissionSub.Tags);
+  const isTagActionDisabled = !canEditSecretsInAnyEnv || !canReadTags;
 
   const usedBySecretSyncsFiltered = useMemo(() => {
     if (selectedKeysCount === 0 || usedBySecretSyncs.length === 0) return null;
@@ -176,7 +205,7 @@ export const SelectionPanel = ({
             })
           );
 
-          if (entry && canDeleteSecret && !entry.isRotatedSecret) {
+          if (entry && canDeleteSecret && !entry.isRotatedSecret && !entry.isHoneyTokenSecret) {
             return [
               ...accum,
               {
@@ -269,6 +298,21 @@ export const SelectionPanel = ({
   };
 
   const areFoldersSelected = Boolean(Object.keys(selectedEntries[EntryType.FOLDER]).length);
+  const areRotationsSelected = selectedRotationCount > 0;
+
+  const isMoveDisabled =
+    areFoldersSelected || isHoneyTokenSelected || Boolean(selectedHoneyTokenCount);
+  let moveDisabledReason = "Moving folders is not supported";
+  if ((!areFoldersSelected && isHoneyTokenSelected) || Boolean(selectedHoneyTokenCount)) {
+    moveDisabledReason = "Moving honey tokens is not supported";
+  }
+
+  const isDeleteDisabled = areRotationsSelected || isManagedSecretSelected;
+  let deleteDisabledReason = "Rotated or honey token secrets cannot be deleted via multi-select";
+  if (areRotationsSelected) {
+    deleteDisabledReason =
+      "Rotations cannot be deleted from this view. Use the delete action on the rotation row instead.";
+  }
 
   return (
     <>
@@ -287,17 +331,29 @@ export const SelectionPanel = ({
           >
             Unselect All
           </button>
-          {isRotatedSecretSelected && (
-            <span className="text-xs text-accent">
-              Rotated Secrets will not be affected by action.
-            </span>
+          {selectedKeysCount > 0 && (
+            <Tooltip open={isTagActionDisabled ? undefined : false}>
+              <TooltipTrigger>
+                <Button
+                  isDisabled={isTagActionDisabled}
+                  variant="project"
+                  className="ml-2"
+                  onClick={() => handlePopUpOpen("bulkTagSecrets")}
+                  size="xs"
+                >
+                  <TagsIcon />
+                  Add Tags
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Access denied</TooltipContent>
+            </Tooltip>
           )}
           {shouldShowDelete && (
             <>
-              <Tooltip open={areFoldersSelected ? undefined : false}>
+              <Tooltip open={isMoveDisabled ? undefined : false}>
                 <TooltipTrigger>
                   <Button
-                    isDisabled={areFoldersSelected}
+                    isDisabled={isMoveDisabled}
                     variant="project"
                     className="ml-2"
                     onClick={() => handlePopUpOpen("bulkMoveSecrets")}
@@ -307,17 +363,23 @@ export const SelectionPanel = ({
                     Move
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Moving folders is not supported</TooltipContent>
+                <TooltipContent>{moveDisabledReason}</TooltipContent>
               </Tooltip>
-              <Button
-                variant="danger"
-                className="ml-2"
-                onClick={() => handlePopUpOpen("bulkDeleteEntries")}
-                size="xs"
-              >
-                <TrashIcon />
-                Delete
-              </Button>
+              <Tooltip open={isDeleteDisabled ? undefined : false}>
+                <TooltipTrigger>
+                  <Button
+                    isDisabled={isDeleteDisabled}
+                    variant="danger"
+                    className="ml-2"
+                    onClick={() => handlePopUpOpen("bulkDeleteEntries")}
+                    size="xs"
+                  >
+                    <TrashIcon />
+                    Delete
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{deleteDisabledReason}</TooltipContent>
+              </Tooltip>
             </>
           )}
         </div>
@@ -331,6 +393,17 @@ export const SelectionPanel = ({
         projectSlug={currentProject.slug}
         sourceSecretPath={secretPath}
         secrets={selectedEntries[EntryType.SECRET]}
+        rotations={selectedEntries[EntryType.SECRET_ROTATION]}
+        onComplete={resetSelectedEntries}
+      />
+      <BulkTagDialog
+        isOpen={popUp.bulkTagSecrets.isOpen}
+        onOpenChange={(isOpen) => handlePopUpToggle("bulkTagSecrets", isOpen)}
+        projectId={projectId}
+        secretPath={secretPath}
+        secrets={selectedEntries[EntryType.SECRET]}
+        environments={userAvailableEnvs}
+        visibleEnvs={visibleEnvs}
         onComplete={resetSelectedEntries}
       />
       <BulkDeleteDialog

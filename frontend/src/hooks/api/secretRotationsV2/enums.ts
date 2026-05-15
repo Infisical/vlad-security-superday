@@ -15,7 +15,9 @@ export enum SecretRotation {
   DbtServiceToken = "dbt-service-token",
   WindowsLocalAccount = "windows-local-account",
   OpenRouterApiKey = "open-router-api-key",
-  HpIloLocalAccount = "hp-ilo-local-account"
+  HpIloLocalAccount = "hp-ilo-local-account",
+  SupabaseApiKey = "supabase-api-key",
+  DatadogApplicationKeySecret = "datadog-application-key-secret"
 }
 
 export enum SecretRotationStatus {

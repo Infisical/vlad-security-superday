@@ -1,6 +1,8 @@
 import { ForbiddenError } from "@casl/ability";
 
 import { ActionProjectType, OrganizationActionScope } from "@app/db/schemas";
+import { TGatewayPoolDALFactory } from "@app/ee/services/gateway-pool/gateway-pool-dal";
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
 import { OrgPermissionGatewayActions, OrgPermissionSubjects } from "@app/ee/services/permission/org-permission";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import {
@@ -8,7 +10,6 @@ import {
   ProjectPermissionSub
 } from "@app/ee/services/permission/project-permission";
 import { BadRequestError, DatabaseError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
-import { TProjectDALFactory } from "@app/services/project/project-dal";
 
 import { TGatewayV2DALFactory } from "../gateway-v2/gateway-v2-dal";
 import { TPkiDiscoveryConfigDALFactory } from "./pki-discovery-config-dal";
@@ -46,9 +47,10 @@ type TPkiDiscoveryServiceFactoryDep = {
     TPkiDiscoveryScanHistoryDALFactory,
     "findLatestByDiscoveryId" | "findByDiscoveryId" | "countByDiscoveryId"
   >;
-  projectDAL: Pick<TProjectDALFactory, "findById">;
   permissionService: Pick<TPermissionServiceFactory, "getProjectPermission" | "getOrgPermission">;
   gatewayV2DAL: Pick<TGatewayV2DALFactory, "findOne">;
+  gatewayPoolDAL: Pick<TGatewayPoolDALFactory, "findById">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveAttachableGatewayFromPool">;
   queuePkiDiscoveryScan: (discoveryId: string) => Promise<void>;
 };
 
@@ -71,9 +73,10 @@ const validateTargetConfigForType = (discoveryType: PkiDiscoveryType, config: TP
 export const pkiDiscoveryServiceFactory = ({
   pkiDiscoveryConfigDAL,
   pkiDiscoveryScanHistoryDAL,
-  projectDAL,
   permissionService,
   gatewayV2DAL,
+  gatewayPoolDAL,
+  gatewayPoolService,
   queuePkiDiscoveryScan
 }: TPkiDiscoveryServiceFactoryDep) => {
   const createDiscovery = async ({
@@ -85,11 +88,16 @@ export const pkiDiscoveryServiceFactory = ({
     isAutoScanEnabled,
     scanIntervalDays,
     gatewayId,
+    gatewayPoolId,
     actor,
     actorId,
     actorAuthMethod,
     actorOrgId
   }: TCreatePkiDiscoveryDTO) => {
+    if (gatewayId && gatewayPoolId) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+
     const { permission } = await permissionService.getProjectPermission({
       actor,
       actorId,
@@ -103,11 +111,6 @@ export const pkiDiscoveryServiceFactory = ({
       ProjectPermissionPkiDiscoveryActions.Create,
       ProjectPermissionSub.PkiDiscovery
     );
-
-    const project = await projectDAL.findById(projectId);
-    if (!project) {
-      throw new NotFoundError({ message: `Project with ID '${projectId}' not found` });
-    }
 
     const existingCount = await pkiDiscoveryConfigDAL.countByProjectId(projectId);
     if (existingCount >= MAX_DISCOVERIES_PER_PROJECT) {
@@ -137,6 +140,12 @@ export const pkiDiscoveryServiceFactory = ({
         OrgPermissionGatewayActions.AttachGateways,
         OrgPermissionSubjects.Gateway
       );
+    } else if (gatewayPoolId) {
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actorOrgId,
+        actor: { type: actor, id: actorId, orgId: actorOrgId, authMethod: actorAuthMethod }
+      });
     }
 
     try {
@@ -148,7 +157,8 @@ export const pkiDiscoveryServiceFactory = ({
         targetConfig,
         isAutoScanEnabled: isAutoScanEnabled ?? false,
         scanIntervalDays: isAutoScanEnabled ? scanIntervalDays : null,
-        gatewayId,
+        gatewayId: gatewayPoolId ? null : gatewayId,
+        gatewayPoolId: gatewayPoolId ?? null,
         isActive: true
       });
 
@@ -172,12 +182,17 @@ export const pkiDiscoveryServiceFactory = ({
     isAutoScanEnabled,
     scanIntervalDays,
     gatewayId,
+    gatewayPoolId,
     isActive,
     actor,
     actorId,
     actorAuthMethod,
     actorOrgId
   }: TUpdatePkiDiscoveryDTO) => {
+    if (gatewayId && gatewayPoolId) {
+      throw new BadRequestError({ message: "Cannot specify both a gateway and a gateway pool" });
+    }
+
     const discovery = await pkiDiscoveryConfigDAL.findById(discoveryId);
     if (!discovery) {
       throw new NotFoundError({ message: `Discovery configuration with ID '${discoveryId}' not found` });
@@ -223,7 +238,16 @@ export const pkiDiscoveryServiceFactory = ({
         OrgPermissionGatewayActions.AttachGateways,
         OrgPermissionSubjects.Gateway
       );
+    } else if (gatewayPoolId && gatewayPoolId !== discovery.gatewayPoolId) {
+      await gatewayPoolService.resolveAttachableGatewayFromPool({
+        poolId: gatewayPoolId,
+        orgId: actorOrgId,
+        actor: { type: actor, id: actorId, orgId: actorOrgId, authMethod: actorAuthMethod }
+      });
     }
+
+    const gatewayIdValue = gatewayPoolId ? null : gatewayId;
+    const gatewayPoolIdValue = gatewayId ? null : gatewayPoolId;
 
     try {
       const updatedDiscovery = await pkiDiscoveryConfigDAL.updateById(discoveryId, {
@@ -232,7 +256,8 @@ export const pkiDiscoveryServiceFactory = ({
         targetConfig,
         isAutoScanEnabled,
         scanIntervalDays: isAutoScanEnabled ? scanIntervalDays : null,
-        gatewayId,
+        gatewayId: gatewayIdValue,
+        gatewayPoolId: gatewayPoolIdValue,
         isActive
       });
 
@@ -300,14 +325,20 @@ export const pkiDiscoveryServiceFactory = ({
     );
 
     let gatewayName: string | null = null;
+    let gatewayPoolName: string | null = null;
     if (discovery.gatewayId) {
       const gateway = await gatewayV2DAL.findOne({ id: discovery.gatewayId });
       if (gateway) {
         gatewayName = gateway.name;
       }
+    } else if (discovery.gatewayPoolId) {
+      const pool = await gatewayPoolDAL.findById(discovery.gatewayPoolId);
+      if (pool) {
+        gatewayPoolName = pool.name;
+      }
     }
 
-    return { ...discovery, gatewayName };
+    return { ...discovery, gatewayName, gatewayPoolName };
   };
 
   const listDiscoveries = async ({

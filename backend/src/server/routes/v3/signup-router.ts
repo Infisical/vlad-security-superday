@@ -27,7 +27,8 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
       }),
       response: {
         200: z.object({
-          message: z.string()
+          message: z.string(),
+          cooldownSeconds: z.number()
         })
       }
     },
@@ -50,8 +51,8 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
           });
         }
       }
-      await server.services.signup.beginEmailSignupProcess(email);
-      return { message: `Sent an email verification code to ${email}` };
+      const { cooldownSeconds } = await server.services.signup.beginEmailSignupProcess(email);
+      return { message: `Sent an email verification code to ${email}`, cooldownSeconds };
     }
   });
 
@@ -60,7 +61,8 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
     method: "POST",
     config: {
       rateLimit: smtpRateLimit({
-        keyGenerator: (req) => (req.body as { email?: string })?.email?.trim().substring(0, 100) || req.realIp
+        keyGenerator: (req) =>
+          (req.body as { email?: string })?.email?.trim()?.toLowerCase().substring(0, 100) || req.realIp
       })
     },
     schema: {
@@ -106,11 +108,13 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
           lastName: z.string().trim().optional(),
           attributionSource: z.string().trim().optional(),
           password: z.string(),
-          organizationName: GenericResourceNameSchema.optional()
+          organizationName: GenericResourceNameSchema.optional(),
+          hubspotUtk: z.string().trim().max(512).optional()
         }),
         z.object({
           type: z.literal(CompleteAccountType.Alias),
-          code: z.string().trim()
+          code: z.string().trim(),
+          hubspotUtk: z.string().trim().max(512).optional()
         })
       ]),
       response: {
@@ -126,7 +130,7 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
       if (!userAgent) throw new Error("user agent header is required");
       const appCfg = getConfig();
 
-      const { user, accessToken, refreshToken, authMethod, organizationId } =
+      const { user, accessToken, refreshToken, authMethod, organizationId, isInvitedUser } =
         await server.services.signup.completeAccount({
           ...req.body,
           ip: req.realIp,
@@ -138,12 +142,14 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
         void server.services.telemetry.sendLoopsEvent(user.email, user.firstName || "", user.lastName || "");
         void server.services.telemetry.sendHubSpotSignupEvent(
           user.email,
-          authMethod,
+          isInvitedUser ? "invite" : authMethod,
           user.firstName || "",
-          user.lastName || ""
+          user.lastName || "",
+          req.body.hubspotUtk
         );
       }
 
+      const bodyAttributionSource = "attributionSource" in req.body ? req.body.attributionSource : undefined;
       void server.services.telemetry.sendPostHogEvents({
         event: PostHogEventTypes.UserSignedUp,
         distinctId: user.username ?? "",
@@ -151,7 +157,8 @@ export const registerSignupRouter = async (server: FastifyZodProvider) => {
         properties: {
           username: user.username,
           email: user.email ?? "",
-          attributionSource: "attributionSource" in req.body ? req.body.attributionSource : undefined
+          attributionSource: isInvitedUser ? "Team Invite" : bodyAttributionSource,
+          signupMethod: isInvitedUser ? "invite" : "email"
         }
       });
 

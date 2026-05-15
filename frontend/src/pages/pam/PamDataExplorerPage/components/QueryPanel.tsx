@@ -4,7 +4,9 @@ import { GripHorizontalIcon } from "lucide-react";
 import { cn } from "@app/components/v3/utils";
 
 import type { FieldInfo } from "../data-explorer-types";
+import { copyData, exportData } from "../data-export";
 import type { QueryTab } from "../use-query-tabs";
+import { ExportDropdown } from "./ExportDropdown";
 import { QueryResultsTable } from "./QueryResultsTable";
 import { QueryToolbar } from "./QueryToolbar";
 import { SqlEditor } from "./SqlEditor";
@@ -26,9 +28,8 @@ type QueryResult = {
 
 type Props = {
   tab: QueryTab;
-  executeQuery: (sql: string) => Promise<QueryResult>;
-  cancelQuery: () => void;
-  isInTransaction: boolean;
+  executeQuery: (connectionId: string, sql: string) => Promise<QueryResult>;
+  cancelQuery: (connectionId: string) => void;
   onSqlChange: (sql: string) => void;
   onTransactionStateChange: (open: boolean) => void;
 };
@@ -37,7 +38,6 @@ export function QueryPanel({
   tab,
   executeQuery,
   cancelQuery,
-  isInTransaction,
   onSqlChange,
   onTransactionStateChange
 }: Props) {
@@ -62,10 +62,13 @@ export function QueryPanel({
     setIsRunning(true);
     setError(null);
     try {
-      const res = await executeQuery(sqlToRun);
+      const res = await executeQuery(tab.connectionId, sqlToRun);
       onTransactionStateChange(res.transactionOpen);
       setResult(res);
     } catch (err) {
+      // BE is the source of truth via transactionOpen on error responses, but
+      // when the pending promise rejects without a transactionOpen (e.g. WS
+      // drop, timeout) we fall back to assuming the txn is gone.
       onTransactionStateChange(false);
       setError(err instanceof Error ? err.message : String(err));
       setResult(null);
@@ -115,12 +118,12 @@ export function QueryPanel({
     <div className="flex h-full w-full flex-col overflow-hidden">
       <QueryToolbar
         isRunning={isRunning}
-        isInTransaction={isInTransaction}
+        isInTransaction={tab.isInTransaction}
         hasSelection={hasSelection}
         onRun={handleRun}
         onCommit={handleCommit}
         onRollback={handleRollback}
-        onCancel={cancelQuery}
+        onCancel={() => cancelQuery(tab.connectionId)}
       />
       <div
         ref={containerRef}
@@ -171,7 +174,7 @@ export function QueryPanel({
             <QueryResultsTable result={result} error={error} isRunning={isRunning} />
           </div>
           {!isRunning && result && !error && (
-            <div className="flex shrink-0 items-center border-t border-mineshaft-600 px-3 py-1">
+            <div className="flex shrink-0 items-center justify-between border-t border-mineshaft-600 px-3 py-1">
               <span className="text-xs text-mineshaft-400">
                 {result.rowCount != null
                   ? getRowLabel(result.rowCount, result.isTruncated)
@@ -179,6 +182,24 @@ export function QueryPanel({
                 {" · "}
                 {result.executionTimeMs}ms
               </span>
+              {result.rows.length > 0 && (
+                <ExportDropdown
+                  onExport={(fmt) =>
+                    exportData(
+                      result.rows,
+                      result.fields.map((f) => f.name),
+                      fmt
+                    )
+                  }
+                  onCopy={(fmt) =>
+                    copyData(
+                      result.rows,
+                      result.fields.map((f) => f.name),
+                      fmt
+                    )
+                  }
+                />
+              )}
             </div>
           )}
         </div>

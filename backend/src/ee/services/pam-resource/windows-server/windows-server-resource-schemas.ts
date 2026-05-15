@@ -64,6 +64,11 @@ export const WindowsResourceInternalMetadataSchema = z.object({
   osVersionDetail: z.string().optional()
 });
 
+export const SanitizedWindowsResourceInternalMetadataSchema = WindowsResourceInternalMetadataSchema.pick({
+  osVersion: true,
+  osVersionDetail: true
+});
+
 export const WindowsResourceSchema = BaseWindowsResourceSchema.extend({
   connectionDetails: WindowsResourceConnectionDetailsSchema,
   rotationAccountCredentials: WindowsAccountCredentialsSchema.nullable().optional()
@@ -82,13 +87,13 @@ export const SanitizedWindowsResourceSchema = BaseWindowsResourceSchema.extend({
 export const CreateWindowsResourceSchema = BaseCreateGatewayPamResourceSchema.extend({
   connectionDetails: WindowsResourceConnectionDetailsSchema,
   rotationAccountCredentials: WindowsAccountCredentialsSchema.nullable().optional(),
-  adServerResourceId: z.string().uuid().nullable().optional()
+  domainId: z.string().uuid().nullable().optional()
 });
 
 export const UpdateWindowsResourceSchema = BaseUpdateGatewayPamResourceSchema.extend({
   connectionDetails: WindowsResourceConnectionDetailsSchema.optional(),
   rotationAccountCredentials: WindowsAccountCredentialsSchema.nullable().optional(),
-  adServerResourceId: z.string().uuid().nullable().optional()
+  domainId: z.string().uuid().nullable().optional()
 });
 
 // Accounts
@@ -108,7 +113,7 @@ export const UpdateWindowsAccountSchema = BaseUpdatePamAccountSchema.extend({
 });
 
 export const SanitizedWindowsAccountWithResourceSchema = BasePamAccountSchemaWithResource.extend({
-  resourceType: z.literal(PamResource.Windows),
+  parentType: z.literal(PamResource.Windows),
   credentials: z.object({
     username: z.string()
   }),
@@ -116,6 +121,8 @@ export const SanitizedWindowsAccountWithResourceSchema = BasePamAccountSchemaWit
 });
 
 // Sessions
-export const WindowsSessionCredentialsSchema = WindowsResourceConnectionDetailsSchema.and(
-  WindowsAccountCredentialsSchema
-);
+// Renames `hostname` to `host` so the gateway can dispatch all resource types
+// uniformly on a `host` field. `domain` is set on AD-account sessions for NTLM.
+export const WindowsSessionCredentialsSchema = WindowsResourceConnectionDetailsSchema.omit({ hostname: true })
+  .extend({ host: z.string().trim().min(1).max(255), domain: z.string().optional() })
+  .and(WindowsAccountCredentialsSchema);

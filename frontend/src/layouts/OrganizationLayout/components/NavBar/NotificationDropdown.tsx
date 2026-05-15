@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { faBell } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useRouter } from "@tanstack/react-router";
-import { Bell, BellDotIcon } from "lucide-react";
+import { Bell, BellIcon } from "lucide-react";
 
 import {
   ContentLoader,
@@ -10,7 +10,7 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger
 } from "@app/components/v2";
-import { UnstableIconButton } from "@app/components/v3";
+import { IconButton } from "@app/components/v3";
 import {
   useDeleteNotification,
   useMarkAllNotificationsAsRead,
@@ -44,14 +44,15 @@ export const NotificationDropdown = () => {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
-        <UnstableIconButton
-          variant="outline"
-          size="sm"
-          aria-label="Notifications"
-          className="relative"
-        >
-          {unreadCount > 0 ? <BellDotIcon className="text-warning" /> : <Bell />}
-        </UnstableIconButton>
+        <IconButton variant="outline" size="sm" aria-label="Notifications" className="relative">
+          {unreadCount > 0 ? <BellIcon className="text-warning" /> : <Bell />}
+          {unreadCount > 0 && (
+            <span
+              aria-hidden="true"
+              className="absolute -top-0.5 -right-0.5 z-10 size-2 rounded-full bg-warning ring-2 ring-background"
+            />
+          )}
+        </IconButton>
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="end"

@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { AuthTokenSessionsSchema } from "@app/db/schemas";
-import { ApiKeysSchema } from "@app/db/schemas/api-keys";
 import { readLimit, smtpRateLimit, writeLimit } from "@app/server/config/rateLimiter";
 import { verifyAuth } from "@app/server/plugins/auth/verify-auth";
 import { AuthMethod, AuthMode, MfaMethod } from "@app/services/auth/auth-type";
@@ -143,6 +142,36 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
   });
 
   server.route({
+    method: "POST",
+    url: "/me/email-change/verify-current",
+    config: {
+      rateLimit: smtpRateLimit({
+        keyGenerator: (req) => req.permission.id
+      })
+    },
+    schema: {
+      operationId: "verifyCurrentEmailOtp",
+      body: z.object({
+        otpCode: z.string().trim().length(6)
+      }),
+      response: {
+        200: z.object({
+          success: z.boolean(),
+          newEmail: z.string()
+        })
+      }
+    },
+    preHandler: verifyAuth([AuthMode.JWT], { requireOrg: false }),
+    handler: async (req) => {
+      const result = await server.services.user.verifyCurrentEmailOTP({
+        userId: req.permission.id,
+        otpCode: req.body.otpCode
+      });
+      return result;
+    }
+  });
+
+  server.route({
     method: "PATCH",
     url: "/me/email",
     config: {
@@ -190,75 +219,6 @@ export const registerUserRouter = async (server: FastifyZodProvider) => {
     handler: async (req) => {
       const organizations = await server.services.org.findAllOrganizationOfUser(req.permission.id);
       return { organizations };
-    }
-  });
-
-  server.route({
-    method: "GET",
-    url: "/me/api-keys",
-    config: {
-      rateLimit: readLimit
-    },
-    schema: {
-      operationId: "listUserApiKeys",
-      response: {
-        200: ApiKeysSchema.omit({ secretHash: true }).array()
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeys = await server.services.apiKey.getMyApiKeys(req.permission.id);
-      return apiKeys;
-    }
-  });
-
-  server.route({
-    method: "POST",
-    url: "/me/api-keys",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      operationId: "createUserApiKey",
-      body: z.object({
-        name: z.string().trim(),
-        expiresIn: z.number()
-      }),
-      response: {
-        200: z.object({
-          apiKey: z.string(),
-          apiKeyData: ApiKeysSchema.omit({ secretHash: true })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeys = await server.services.apiKey.createApiKey(req.permission.id, req.body.name, req.body.expiresIn);
-      return apiKeys;
-    }
-  });
-
-  server.route({
-    method: "DELETE",
-    url: "/me/api-keys/:apiKeyDataId",
-    config: {
-      rateLimit: writeLimit
-    },
-    schema: {
-      operationId: "deleteUserApiKey",
-      params: z.object({
-        apiKeyDataId: z.string().trim()
-      }),
-      response: {
-        200: z.object({
-          apiKeyData: ApiKeysSchema.omit({ secretHash: true })
-        })
-      }
-    },
-    onRequest: verifyAuth([AuthMode.JWT]),
-    handler: async (req) => {
-      const apiKeyData = await server.services.apiKey.deleteApiKey(req.permission.id, req.params.apiKeyDataId);
-      return { apiKeyData };
     }
   });
 

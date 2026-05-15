@@ -18,7 +18,6 @@ import { TLicenseServiceFactory } from "@app/ee/services/license/license-service
 import { TProjectEventsService } from "@app/ee/services/project-events/project-events-service";
 import { ProjectEvents, TProjectEventPayload } from "@app/ee/services/project-events/project-events-types";
 import { TSecretApprovalRequestDALFactory } from "@app/ee/services/secret-approval-request/secret-approval-request-dal";
-import { TSecretRotationDALFactory } from "@app/ee/services/secret-rotation/secret-rotation-dal";
 import { TSnapshotDALFactory } from "@app/ee/services/secret-snapshot/snapshot-dal";
 import { TSnapshotSecretV2DALFactory } from "@app/ee/services/secret-snapshot/snapshot-secret-v2-dal";
 import { KeyStorePrefixes, KeyStoreTtls, TKeyStoreFactory } from "@app/keystore/keystore";
@@ -27,6 +26,8 @@ import { crypto, SymmetricKeySize } from "@app/lib/crypto/cryptography";
 import { BadRequestError, NotFoundError } from "@app/lib/errors";
 import { getTimeDifferenceInSeconds, groupBy, isSamePath, unique } from "@app/lib/fn";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue";
 import { TProjectBotDALFactory } from "@app/services/project-bot/project-bot-dal";
 import { createManySecretsRawFnFactory, updateManySecretsRawFnFactory } from "@app/services/secret/secret-fns";
@@ -113,7 +114,6 @@ type TSecretQueueFactoryDep = {
   secretV2BridgeDAL: TSecretV2BridgeDALFactory;
   secretVersionV2BridgeDAL: Pick<TSecretVersionV2DALFactory, "batchInsert" | "insertMany" | "findLatestVersionMany">;
   secretVersionTagV2BridgeDAL: Pick<TSecretVersionV2TagDALFactory, "insertMany" | "batchInsert">;
-  secretRotationDAL: Pick<TSecretRotationDALFactory, "secretOutputV2InsertMany" | "find">;
   secretApprovalRequestDAL: Pick<TSecretApprovalRequestDALFactory, "deleteByProjectId">;
   snapshotDAL: Pick<TSnapshotDALFactory, "findNSecretV1SnapshotByFolderId" | "deleteSnapshotsAboveLimit">;
   snapshotSecretV2BridgeDAL: Pick<TSnapshotSecretV2DALFactory, "insertMany" | "batchInsert">;
@@ -178,8 +178,8 @@ export const secretQueueFactory = ({
   secretVersionV2BridgeDAL,
   kmsService,
   secretVersionTagV2BridgeDAL,
-  secretRotationDAL,
   snapshotDAL,
+
   snapshotSecretV2BridgeDAL,
   secretApprovalRequestDAL,
   keyStore,
@@ -240,7 +240,9 @@ export const secretQueueFactory = ({
           return user?.email || user?.username || changedBy;
         }
         case ActorType.IDENTITY: {
-          const identity = await identityDAL.findById(changedBy);
+          const identity = await requestMemoize(requestMemoKeys.identityFindById(changedBy), () =>
+            identityDAL.findById(changedBy)
+          );
           return identity?.name || changedBy;
         }
         case ActorType.SERVICE: {
@@ -1555,17 +1557,6 @@ export const secretQueueFactory = ({
           };
         }),
         "id",
-        tx
-      );
-      /*
-       * Secret Rotation Secret Migration
-       * Saving the new encrypted colum
-       * */
-      const projectV1SecretRotations = await secretRotationDAL.find({ projectId }, tx);
-      await secretRotationDAL.secretOutputV2InsertMany(
-        projectV1SecretRotations.flatMap((el) =>
-          el.outputs.map((output) => ({ rotationId: el.id, key: output.key, secretId: output.secret.id }))
-        ),
         tx
       );
 

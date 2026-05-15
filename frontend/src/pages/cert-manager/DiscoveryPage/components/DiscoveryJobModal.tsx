@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
 import {
@@ -15,8 +14,9 @@ import {
   Switch,
   TextArea
 } from "@app/components/v2";
+import { GatewayPicker } from "@app/components/v3";
+import { isInfisicalCloud } from "@app/helpers/platform";
 import {
-  gatewaysQueryKeys,
   PkiDiscoveryType,
   TPkiDiscovery,
   useCreatePkiDiscovery,
@@ -176,7 +176,8 @@ const formSchema = z.object({
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: result.error });
       }
     }),
-  gatewayId: z.string().optional(),
+  gatewayId: z.string().optional().nullable(),
+  gatewayPoolId: z.string().optional().nullable(),
   isAutoScanEnabled: z.boolean(),
   scanIntervalDays: z.number().min(1).max(365).optional()
 });
@@ -228,6 +229,7 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { isSubmitting }
   } = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -236,14 +238,12 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
       description: "",
       targets: "",
       ports: DEFAULT_TLS_PORTS,
-      gatewayId: "none",
+      gatewayId: null,
+      gatewayPoolId: null,
       isAutoScanEnabled: false,
       scanIntervalDays: 7
     }
   });
-
-  const { data: gatewaysData } = useQuery(gatewaysQueryKeys.list());
-  const gateways = (gatewaysData || []).filter((g) => !g.isV1);
 
   const createDiscovery = useCreatePkiDiscovery();
   const updateDiscovery = useUpdatePkiDiscovery();
@@ -258,7 +258,8 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
           description: discovery.description || "",
           targets: formatTargets(discovery),
           ports: formatPorts(discovery),
-          gatewayId: discovery.gatewayId || "none",
+          gatewayId: discovery.gatewayId,
+          gatewayPoolId: discovery.gatewayPoolId,
           isAutoScanEnabled: discovery.isAutoScanEnabled,
           scanIntervalDays: discovery.scanIntervalDays || 7
         });
@@ -268,7 +269,8 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
           description: "",
           targets: "",
           ports: DEFAULT_TLS_PORTS,
-          gatewayId: "none",
+          gatewayId: null,
+          gatewayPoolId: null,
           isAutoScanEnabled: false,
           scanIntervalDays: 7
         });
@@ -299,7 +301,8 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
             ipRanges: ipRanges.length > 0 ? ipRanges : undefined,
             ports
           },
-          gatewayId: data.gatewayId && data.gatewayId !== "none" ? data.gatewayId : null,
+          gatewayId: data.gatewayPoolId ? null : (data.gatewayId ?? null),
+          gatewayPoolId: data.gatewayPoolId ?? null,
           isAutoScanEnabled: data.isAutoScanEnabled,
           scanIntervalDays: data.isAutoScanEnabled ? data.scanIntervalDays : null
         });
@@ -314,7 +317,8 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
             ipRanges: ipRanges.length > 0 ? ipRanges : undefined,
             ports
           },
-          gatewayId: data.gatewayId && data.gatewayId !== "none" ? data.gatewayId : undefined,
+          gatewayId: data.gatewayPoolId ? undefined : (data.gatewayId ?? undefined),
+          gatewayPoolId: data.gatewayPoolId ?? undefined,
           isAutoScanEnabled: data.isAutoScanEnabled,
           scanIntervalDays: data.isAutoScanEnabled ? data.scanIntervalDays : undefined
         });
@@ -404,34 +408,47 @@ export const DiscoveryJobModal = ({ isOpen, onClose, projectId, discovery }: Pro
           <Controller
             name="gatewayId"
             control={control}
-            render={({ field }) => (
-              <FormControl
-                label="Gateway"
-                tooltipText="Use a gateway to discover certificates on private networks that are not directly accessible from the internet. The gateway acts as a proxy, routing scan traffic through your infrastructure."
-              >
-                <Select
-                  value={field.value}
-                  onValueChange={field.onChange}
-                  placeholder="Select a gateway (optional)"
-                  className="w-full"
+            render={() => {
+              const gatewayIdVal = watch("gatewayId");
+              const gatewayPoolIdVal = watch("gatewayPoolId");
+              return (
+                <FormControl
+                  label="Gateway"
+                  tooltipClassName="max-w-lg py-3"
+                  tooltipText={
+                    <div className="flex flex-col gap-3">
+                      <p>
+                        Use a gateway to discover certificates on private networks that are not
+                        directly accessible from the internet. The gateway acts as a proxy, routing
+                        scan traffic through your infrastructure.
+                      </p>
+                      {!isInfisicalCloud() && (
+                        <p>
+                          Alternatively, you can set the{" "}
+                          <span className="font-medium text-bunker-200">
+                            ALLOW_INTERNAL_IP_CONNECTIONS
+                          </span>{" "}
+                          environment variable to <span className="font-medium">true</span> on your
+                          instance to scan private networks directly without a gateway.
+                        </p>
+                      )}
+                    </div>
+                  }
                 >
-                  <SelectItem value="none" key="none">
-                    None (Direct scan)
-                  </SelectItem>
-                  {gateways.length === 0 ? (
-                    <SelectItem value="no-gateways" isDisabled>
-                      No gateways available
-                    </SelectItem>
-                  ) : (
-                    gateways.map((gateway) => (
-                      <SelectItem value={gateway.id} key={gateway.id}>
-                        {gateway.name}
-                      </SelectItem>
-                    ))
-                  )}
-                </Select>
-              </FormControl>
-            )}
+                  <GatewayPicker
+                    value={{
+                      gatewayId: gatewayIdVal ?? null,
+                      gatewayPoolId: gatewayPoolIdVal ?? null
+                    }}
+                    onChange={({ gatewayId, gatewayPoolId }) => {
+                      setValue("gatewayId", gatewayId, { shouldDirty: true });
+                      setValue("gatewayPoolId", gatewayPoolId, { shouldDirty: true });
+                    }}
+                    className="w-full"
+                  />
+                </FormControl>
+              );
+            }}
           />
 
           <Controller

@@ -13,6 +13,8 @@ import {
 } from "@app/ee/services/permission/permission-fns";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { BadRequestError, InternalServerError, PermissionBoundaryError } from "@app/lib/errors";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { TOrgDALFactory } from "@app/services/org/org-dal";
 import { isCustomOrgRole } from "@app/services/org/org-role-fns";
 
@@ -86,7 +88,10 @@ export const newOrgMembershipGroupFactory = ({
       dto.data.roles.map((el) => el.role),
       dto.permission.orgId
     );
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(dto.permission.orgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+      requestMemoKeys.orgFindById(dto.permission.orgId),
+      () => orgDAL.findById(dto.permission.orgId)
+    );
     for (const permissionRole of permissionRoles) {
       if (permissionRole?.role?.name !== OrgMembershipRole.NoAccess) {
         const permissionBoundary = validatePrivilegeChangeOperation(
@@ -108,6 +113,8 @@ export const newOrgMembershipGroupFactory = ({
           });
       }
     }
+
+    return { group: { id: group.id, name: group.name } };
   };
 
   const onUpdateMembershipGroupGuard: TMembershipGroupScopeFactory["onUpdateMembershipGroupGuard"] = async (dto) => {
@@ -120,12 +127,19 @@ export const newOrgMembershipGroupFactory = ({
       scope: OrganizationActionScope.Any
     });
     ForbiddenError.from(permission).throwUnlessCan(OrgPermissionGroupActions.Edit, OrgPermissionSubjects.Groups);
+
+    const groupDetails = await groupDAL.findById(dto.selector.groupId);
+    if (!groupDetails) throw new BadRequestError({ message: "Group details not found" });
+
     const permissionRoles = await permissionService.getOrgPermissionByRoles(
       dto.data.roles.map((el) => el.role),
       dto.permission.orgId
     );
 
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(dto.permission.orgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(
+      requestMemoKeys.orgFindById(dto.permission.orgId),
+      () => orgDAL.findById(dto.permission.orgId)
+    );
     for (const permissionRole of permissionRoles) {
       if (permissionRole?.role?.name !== OrgMembershipRole.NoAccess) {
         const permissionBoundary = validatePrivilegeChangeOperation(
@@ -147,6 +161,8 @@ export const newOrgMembershipGroupFactory = ({
           });
       }
     }
+
+    return { group: { id: groupDetails.id, name: groupDetails.name } };
   };
 
   const onDeleteMembershipGroupGuard: TMembershipGroupScopeFactory["onDeleteMembershipGroupGuard"] = async (dto) => {
@@ -181,6 +197,8 @@ export const newOrgMembershipGroupFactory = ({
       scope: OrganizationActionScope.ChildOrganization
     });
     ForbiddenError.from(permission).throwUnlessCan(OrgPermissionGroupActions.Delete, OrgPermissionSubjects.Groups);
+
+    return { group: { id: group.id, name: group.name } };
   };
 
   const onListMembershipGroupGuard: TMembershipGroupScopeFactory["onListMembershipGroupGuard"] = async (dto) => {

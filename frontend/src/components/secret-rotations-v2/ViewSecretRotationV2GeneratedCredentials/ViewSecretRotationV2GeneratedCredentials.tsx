@@ -23,11 +23,13 @@ import {
 
 import { ViewSqlCredentialsRotationGeneratedCredentials } from "./shared";
 import { ViewAwsIamUserSecretRotationGeneratedCredentials } from "./ViewAwsIamUserSecretRotationGeneratedCredentials";
+import { ViewDatadogApplicationKeySecretRotationGeneratedCredentials } from "./ViewDatadogApplicationKeySecretRotationGeneratedCredentials";
 import { ViewDbtServiceTokenRotationGeneratedCredentials } from "./ViewDbtSeviceTokenRotationGeneratedCredentials";
 import { ViewHpIloRotationGeneratedCredentials } from "./ViewHpIloRotationGeneratedCredentials";
 import { ViewOktaClientSecretRotationGeneratedCredentials } from "./ViewOktaClientSecretRotationGeneratedCredentials";
 import { ViewOpenRouterApiKeyRotationGeneratedCredentials } from "./ViewOpenRouterApiKeyRotationGeneratedCredentials";
 import { ViewRedisCredentialsRotationGeneratedCredentials } from "./ViewRedisCredentialsRotationGeneratedCredentials";
+import { ViewSupabaseApiKeyRotationGeneratedCredentials } from "./ViewSupabaseApiKeyRotationGeneratedCredentials";
 import { ViewUnixLinuxLocalAccountRotationGeneratedCredentials } from "./ViewUnixLinuxLocalAccountRotationGeneratedCredentials";
 import { ViewWindowsLocalAccountRotationGeneratedCredentials } from "./ViewWindowsLocalAccountRotationGeneratedCredentials";
 
@@ -160,6 +162,20 @@ const Content = ({ secretRotation }: ContentProps) => {
     case SecretRotation.HpIloLocalAccount:
       Component = (
         <ViewHpIloRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.SupabaseApiKey:
+      Component = (
+        <ViewSupabaseApiKeyRotationGeneratedCredentials
+          generatedCredentialsResponse={generatedCredentialsResponse}
+        />
+      );
+      break;
+    case SecretRotation.DatadogApplicationKeySecret:
+      Component = (
+        <ViewDatadogApplicationKeySecretRotationGeneratedCredentials
           generatedCredentialsResponse={generatedCredentialsResponse}
         />
       );

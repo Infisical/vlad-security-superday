@@ -9,12 +9,12 @@ import {
 import { DiscriminativePick } from "@app/types";
 
 import { PamResourceHeader } from "../PamResourceHeader";
-import { ActiveDirectoryResourceForm } from "./ActiveDirectoryResourceForm";
 import { AwsIamResourceForm } from "./AwsIamResourceForm";
 import { KubernetesResourceForm } from "./KubernetesResourceForm";
 import { MongoDBResourceForm } from "./MongoDBResourceForm";
 import { MsSQLResourceForm } from "./MsSQLResourceForm";
 import { MySQLResourceForm } from "./MySQLResourceForm";
+import { OracleDBResourceForm } from "./OracleDBResourceForm";
 import { PostgresResourceForm } from "./PostgresResourceForm";
 import { RedisResourceForm } from "./RedisResourceForm";
 import { SSHResourceForm } from "./SSHResourceForm";
@@ -40,17 +40,17 @@ const CreateForm = ({ resourceType, closeSheet, projectId }: CreateFormProps) =>
   const onSubmit = async (
     formData: DiscriminativePick<
       TPamResource,
-      "name" | "resourceType" | "connectionDetails" | "adServerResourceId"
+      "name" | "resourceType" | "connectionDetails" | "domainId"
     > & {
-      gateway?: { id: string; name: string } | null;
-      gatewayId?: string;
+      gatewayId?: string | null;
+      gatewayPoolId?: string | null;
       metadata?: { key: string; value: string }[];
     }
   ) => {
-    const { gateway, ...rest } = formData;
     const resource = await createPamResource.mutateAsync({
-      ...rest,
-      gatewayId: gateway?.id ?? rest.gatewayId,
+      ...formData,
+      gatewayId: formData.gatewayId ?? undefined,
+      gatewayPoolId: formData.gatewayPoolId ?? undefined,
       projectId
     });
     createNotification({
@@ -67,6 +67,8 @@ const CreateForm = ({ resourceType, closeSheet, projectId }: CreateFormProps) =>
       return <MySQLResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
     case PamResourceType.MsSQL:
       return <MsSQLResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
+    case PamResourceType.OracleDB:
+      return <OracleDBResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
     case PamResourceType.MongoDB:
       return <MongoDBResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
     case PamResourceType.Redis:
@@ -79,8 +81,6 @@ const CreateForm = ({ resourceType, closeSheet, projectId }: CreateFormProps) =>
       return <AwsIamResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
     case PamResourceType.Windows:
       return <WindowsResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
-    case PamResourceType.ActiveDirectory:
-      return <ActiveDirectoryResourceForm onSubmit={onSubmit} closeSheet={closeSheet} />;
     default:
       throw new Error(`Unhandled resource: ${resourceType}`);
   }
@@ -93,18 +93,18 @@ const UpdateForm = ({ resource, closeSheet }: UpdateFormProps) => {
   const onSubmit = async (
     formData: DiscriminativePick<
       TPamResource,
-      "name" | "resourceType" | "connectionDetails" | "adServerResourceId"
+      "name" | "resourceType" | "connectionDetails" | "domainId"
     > & {
-      gateway?: { id: string; name: string } | null;
-      gatewayId?: string;
+      gatewayId?: string | null;
+      gatewayPoolId?: string | null;
       metadata?: { key: string; value: string }[];
     }
   ) => {
-    const { gateway, ...rest } = formData;
     const updatedResource = await updatePamResource.mutateAsync({
       resourceId: resource.id,
-      ...rest,
-      gatewayId: gateway?.id ?? rest.gatewayId
+      ...formData,
+      gatewayId: formData.gatewayId ?? undefined,
+      gatewayPoolId: formData.gatewayPoolId ?? undefined
     });
     createNotification({
       text: `Successfully updated ${resourceName} resource`,
@@ -122,6 +122,10 @@ const UpdateForm = ({ resource, closeSheet }: UpdateFormProps) => {
       return <MySQLResourceForm resource={resource} onSubmit={onSubmit} closeSheet={closeSheet} />;
     case PamResourceType.MsSQL:
       return <MsSQLResourceForm resource={resource} onSubmit={onSubmit} closeSheet={closeSheet} />;
+    case PamResourceType.OracleDB:
+      return (
+        <OracleDBResourceForm resource={resource} onSubmit={onSubmit} closeSheet={closeSheet} />
+      );
     case PamResourceType.MongoDB:
       return (
         <MongoDBResourceForm resource={resource} onSubmit={onSubmit} closeSheet={closeSheet} />
@@ -139,14 +143,6 @@ const UpdateForm = ({ resource, closeSheet }: UpdateFormProps) => {
     case PamResourceType.Windows:
       return (
         <WindowsResourceForm resource={resource} onSubmit={onSubmit} closeSheet={closeSheet} />
-      );
-    case PamResourceType.ActiveDirectory:
-      return (
-        <ActiveDirectoryResourceForm
-          resource={resource}
-          onSubmit={onSubmit}
-          closeSheet={closeSheet}
-        />
       );
     default:
       throw new Error(`Unhandled resource: ${(resource as any).resourceType}`);

@@ -153,8 +153,17 @@ export const registerProjectRouter = async (server: FastifyZodProvider) => {
         }
       ],
       body: z.object({
-        projectName: z.string().trim().describe(PROJECTS.CREATE.projectName),
-        projectDescription: z.string().trim().optional().describe(PROJECTS.CREATE.projectDescription),
+        projectName: z
+          .string()
+          .trim()
+          .max(64, { message: "Name must be 64 or fewer characters" })
+          .describe(PROJECTS.CREATE.projectName),
+        projectDescription: z
+          .string()
+          .trim()
+          .max(1024, { message: "Description must be 1024 or fewer characters" })
+          .optional()
+          .describe(PROJECTS.CREATE.projectDescription),
         slug: slugSchema({ min: 5, max: 36 }).optional().describe(PROJECTS.CREATE.slug),
         kmsKeyId: z.string().optional(),
         template: slugSchema({ field: "Template Name", max: 64 })
@@ -426,7 +435,7 @@ export const registerProjectRouter = async (server: FastifyZodProvider) => {
         description: z
           .string()
           .trim()
-          .max(256, { message: "Description must be 256 or fewer characters" })
+          .max(1024, { message: "Description must be 1024 or fewer characters" })
           .optional()
           .describe(PROJECTS.UPDATE.projectDescription),
         autoCapitalization: z.boolean().optional().describe(PROJECTS.UPDATE.autoCapitalization),
@@ -1306,18 +1315,46 @@ export const registerProjectRouter = async (server: FastifyZodProvider) => {
           )
           .optional()
           .describe(PROJECTS.SEARCH_CERTIFICATES.metadata),
-        extendedKeyUsage: z.string().trim().optional().describe(PROJECTS.SEARCH_CERTIFICATES.extendedKeyUsage)
+        extendedKeyUsage: z.string().trim().optional().describe(PROJECTS.SEARCH_CERTIFICATES.extendedKeyUsage),
+        keyAlgorithm: z
+          .union([z.string().trim(), z.array(z.string().trim())])
+          .optional()
+          .describe(PROJECTS.SEARCH_CERTIFICATES.keyAlgorithm),
+        signatureAlgorithm: z.string().trim().optional().describe(PROJECTS.SEARCH_CERTIFICATES.signatureAlgorithm),
+        keySizes: z.array(z.number()).optional().describe(PROJECTS.SEARCH_CERTIFICATES.keySizes),
+        caIds: z.array(z.string().uuid()).optional().describe(PROJECTS.SEARCH_CERTIFICATES.caIds),
+        enrollmentTypes: z.array(z.string().trim()).optional().describe(PROJECTS.SEARCH_CERTIFICATES.enrollmentTypes),
+        source: z
+          .union([z.string().trim(), z.array(z.string().trim())])
+          .optional()
+          .describe(PROJECTS.SEARCH_CERTIFICATES.source),
+        notAfterFrom: z.coerce.date().optional().describe(PROJECTS.SEARCH_CERTIFICATES.notAfterFrom),
+        notAfterTo: z.coerce.date().optional().describe(PROJECTS.SEARCH_CERTIFICATES.notAfterTo),
+        notBeforeFrom: z.coerce.date().optional().describe(PROJECTS.SEARCH_CERTIFICATES.notBeforeFrom),
+        notBeforeTo: z.coerce.date().optional().describe(PROJECTS.SEARCH_CERTIFICATES.notBeforeTo),
+        sortBy: z
+          .enum(["notAfter", "notBefore", "createdAt", "commonName", "keyAlgorithm", "status"])
+          .optional()
+          .describe(PROJECTS.SEARCH_CERTIFICATES.sortBy),
+        sortOrder: z.enum(["asc", "desc"]).optional().describe(PROJECTS.SEARCH_CERTIFICATES.sortOrder)
       }),
       response: {
         200: z.object({
-          certificates: z.array(CertificatesSchema.extend({ hasPrivateKey: z.boolean() })),
+          certificates: z.array(
+            CertificatesSchema.extend({
+              hasPrivateKey: z.boolean(),
+              caName: z.string().nullable().optional(),
+              profileName: z.string().nullable().optional(),
+              enrollmentType: z.string().nullable().optional()
+            })
+          ),
           totalCount: z.number()
         })
       }
     },
     onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
     handler: async (req) => {
-      const { metadata, ...filters } = req.body;
+      const { metadata, sortBy, sortOrder, ...filters } = req.body;
       const { certificates, totalCount } = await server.services.project.listProjectCertificates({
         filter: {
           projectId: req.params.projectId,
@@ -1328,9 +1365,154 @@ export const registerProjectRouter = async (server: FastifyZodProvider) => {
         actorAuthMethod: req.permission.authMethod,
         actor: req.permission.type,
         ...filters,
-        metadataFilter: metadata
+        metadataFilter: metadata,
+        sortBy,
+        sortOrder
       });
       return { certificates, totalCount };
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/:projectId/certificates/dashboard-stats",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: true,
+      operationId: "getCertificateDashboardStats",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Get aggregated dashboard statistics for certificates in a project.",
+      params: z.object({
+        projectId: z.string().trim()
+      }),
+      response: {
+        200: z.object({
+          totals: z.object({
+            total: z.number(),
+            active: z.number(),
+            expiringSoon: z.number(),
+            expired: z.number(),
+            revoked: z.number()
+          }),
+          expiringSoonNoAutoRenewal: z.number(),
+          expiredNotRenewed: z.number(),
+          distributions: z.object({
+            byEnrollmentMethod: z.array(z.object({ label: z.string(), count: z.number() })),
+            byAlgorithm: z.array(z.object({ label: z.string(), count: z.number() })),
+            byCA: z.array(z.object({ id: z.string(), label: z.string(), count: z.number() })),
+            byStatus: z.array(z.object({ label: z.string(), count: z.number() }))
+          }),
+          expirationBuckets: z.array(z.object({ bucket: z.string(), count: z.number() })),
+          validityBuckets: z.array(z.object({ bucket: z.string(), count: z.number() }))
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      return server.services.project.getDashboardStats({
+        filter: {
+          projectId: req.params.projectId,
+          type: ProjectFilterType.ID
+        },
+        actorId: req.permission.id,
+        actorOrgId: req.permission.orgId,
+        actorAuthMethod: req.permission.authMethod,
+        actor: req.permission.type
+      });
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/:projectId/certificates/activity-trend",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: true,
+      operationId: "getCertificateActivityTrend",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Get certificate lifecycle activity trend over time.",
+      params: z.object({
+        projectId: z.string().trim()
+      }),
+      querystring: z.object({
+        range: z.enum(["7d", "30d", "6m"]).optional().default("30d")
+      }),
+      response: {
+        200: z.object({
+          periods: z.array(
+            z.object({
+              period: z.string(),
+              issued: z.number(),
+              expired: z.number(),
+              revoked: z.number(),
+              renewed: z.number()
+            })
+          )
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      return server.services.project.getActivityTrend({
+        filter: {
+          projectId: req.params.projectId,
+          type: ProjectFilterType.ID
+        },
+        range: req.query.range,
+        actorId: req.permission.id,
+        actorOrgId: req.permission.orgId,
+        actorAuthMethod: req.permission.authMethod,
+        actor: req.permission.type
+      });
+    }
+  });
+
+  server.route({
+    method: "GET",
+    url: "/:projectId/certificates/pqc-trend",
+    config: {
+      rateLimit: readLimit
+    },
+    schema: {
+      hide: true,
+      operationId: "getCertificatePqcTrend",
+      tags: [ApiDocsTags.PkiCertificates],
+      description: "Get certificate PQC adoption trend over time.",
+      params: z.object({
+        projectId: z.string().trim()
+      }),
+      querystring: z.object({
+        range: z.enum(["7d", "30d", "6m"]).optional().default("30d")
+      }),
+      response: {
+        200: z.object({
+          periods: z.array(
+            z.object({
+              period: z.string(),
+              pqc: z.number(),
+              nonPqc: z.number()
+            })
+          )
+        })
+      }
+    },
+    onRequest: verifyAuth([AuthMode.JWT, AuthMode.IDENTITY_ACCESS_TOKEN]),
+    handler: async (req) => {
+      return server.services.project.getPqcTrend({
+        filter: {
+          projectId: req.params.projectId,
+          type: ProjectFilterType.ID
+        },
+        range: req.query.range,
+        actorId: req.permission.id,
+        actorOrgId: req.permission.orgId,
+        actorAuthMethod: req.permission.authMethod,
+        actor: req.permission.type
+      });
     }
   });
 

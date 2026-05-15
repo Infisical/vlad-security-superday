@@ -23,6 +23,7 @@ import {
   OrgPermissionSsoActions,
   OrgPermissionSubjects
 } from "@app/ee/services/permission/org-permission";
+import { assertPermissionBoundary } from "@app/ee/services/permission/permission-fns";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { TSamlConfigDALFactory } from "@app/ee/services/saml-config/saml-config-dal";
 import { getConfig } from "@app/lib/config/env";
@@ -33,7 +34,8 @@ import { delay as delayMs } from "@app/lib/delay";
 import { BadRequestError, ForbiddenRequestError, NotFoundError, UnauthorizedError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
-import { QueueName } from "@app/queue";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { getDefaultOrgMembershipRoleForUpdateOrg } from "@app/services/org/org-role-fns";
 import { TOrgMembershipDALFactory } from "@app/services/org-membership/org-membership-dal";
 import { TUserAliasDALFactory } from "@app/services/user-alias/user-alias-dal";
@@ -177,7 +179,7 @@ export const orgServiceFactory = ({
     const appCfg = getConfig();
     const hasSubOrg = rootOrgId !== actorOrgId;
 
-    const org = await orgDAL.findOrgById(rootOrgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(rootOrgId), () => orgDAL.findOrgById(rootOrgId));
     if (!org) throw new NotFoundError({ message: `Organization with ID '${rootOrgId}' not found` });
 
     let subOrg;
@@ -450,7 +452,9 @@ export const orgServiceFactory = ({
     }
 
     const plan = await licenseService.getPlan(orgId);
-    const currentOrg = await orgDAL.findOrgById(actorOrgId);
+    const currentOrg = await requestMemoize(requestMemoKeys.orgFindOrgById(actorOrgId), () =>
+      orgDAL.findOrgById(actorOrgId)
+    );
 
     if (secretShareBrandConfig !== undefined) {
       if (!plan.secretShareExternalBranding) {
@@ -826,6 +830,15 @@ export const orgServiceFactory = ({
       userRole = OrgMembershipRole.Custom;
       userRoleId = customRole.id;
     }
+
+    if (role) {
+      const [permissionRole] = await permissionService.getOrgPermissionByRoles([role], orgId);
+      assertPermissionBoundary(
+        permission,
+        permissionRole.permission,
+        "Cannot assign a role exceeding your own privileges to an org member"
+      );
+    }
     const membership = await orgDAL.transaction(async (tx) => {
       // this is because if isActive is undefined then this would fail due to knexjs error
       const [updatedOrgMembership] =
@@ -889,7 +902,7 @@ export const orgServiceFactory = ({
 
     const invitingUser = await userDAL.findOne({ id: actorId });
 
-    const org = await orgDAL.findOrgById(orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
 
     const [inviteeOrgMembership] = await orgDAL.findMembership({
       [`${TableName.Membership}.scopeOrgId` as "scopeOrgId"]: orgId,
@@ -977,7 +990,7 @@ export const orgServiceFactory = ({
       });
     }
 
-    const organization = await orgDAL.findById(orgId);
+    const organization = await requestMemoize(requestMemoKeys.orgFindById(orgId), () => orgDAL.findById(orgId));
 
     await tokenService.validateTokenForUser({
       type: TokenType.TOKEN_EMAIL_ORG_INVITATION,
@@ -1224,7 +1237,7 @@ export const orgServiceFactory = ({
    * Re-send emails to users who haven't accepted an invite yet
    */
   const notifyInvitedUsers = async () => {
-    logger.info(`${QueueName.DailyResourceCleanUp}: notify invited users started`);
+    logger.info(`daily-resource-cleanup: notify invited users started`);
 
     const invitedUsers = await orgMembershipDAL.findRecentInvitedMemberships();
     const appCfg = getConfig();
@@ -1236,7 +1249,9 @@ export const orgServiceFactory = ({
       invitedUsers.map(async (invitedUser) => {
         let org = orgCache[invitedUser.scopeOrgId];
         if (!org) {
-          org = await orgDAL.findById(invitedUser.scopeOrgId);
+          org = await requestMemoize(requestMemoKeys.orgFindById(invitedUser.scopeOrgId), () =>
+            orgDAL.findById(invitedUser.scopeOrgId)
+          );
           orgCache[invitedUser.scopeOrgId] = org;
         }
 
@@ -1266,7 +1281,7 @@ export const orgServiceFactory = ({
             });
             notifiedUsers.push(invitedUser.id);
           } catch (err) {
-            logger.error(err, `${QueueName.DailyResourceCleanUp}: notify invited users failed to send email`);
+            logger.error(err, `daily-resource-cleanup: notify invited users failed to send email`);
           }
         }
       })
@@ -1274,7 +1289,7 @@ export const orgServiceFactory = ({
 
     await orgMembershipDAL.updateLastInvitedAtByIds(notifiedUsers);
 
-    logger.info(`${QueueName.DailyResourceCleanUp}: notify invited users completed`);
+    logger.info(`daily-resource-cleanup: notify invited users completed`);
   };
 
   return {

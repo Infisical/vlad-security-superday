@@ -86,7 +86,8 @@ export const DynamicSecretRedisDBSchema = z.object({
   creationStatement: z.string().trim(),
   revocationStatement: z.string().trim(),
   renewStatement: z.string().trim().optional(),
-  ca: z.string().optional()
+  ca: z.string().optional(),
+  sslRejectUnauthorized: z.boolean().default(true)
 });
 
 export const DynamicSecretAwsElastiCacheSchema = z.object({
@@ -96,8 +97,25 @@ export const DynamicSecretAwsElastiCacheSchema = z.object({
 
   region: z.string().trim(),
   creationStatement: z.string().trim(),
-  revocationStatement: z.string().trim(),
-  ca: z.string().optional()
+  revocationStatement: z.string().trim()
+});
+
+export enum AwsMemoryDbAuthType {
+  IAM = "iam"
+}
+
+export const DynamicSecretAwsMemoryDbSchema = z.object({
+  clusterName: z.string().trim().min(1),
+  auth: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal(AwsMemoryDbAuthType.IAM),
+      accessKeyId: z.string().trim().min(1),
+      secretAccessKey: z.string().trim().min(1)
+    })
+  ]),
+  region: z.string().trim().min(1),
+  creationStatement: z.string().trim(),
+  revocationStatement: z.string().trim()
 });
 
 export const DynamicSecretElasticSearchSchema = z.object({
@@ -119,7 +137,8 @@ export const DynamicSecretElasticSearchSchema = z.object({
     })
   ]),
 
-  ca: z.string().optional()
+  ca: z.string().optional(),
+  sslRejectUnauthorized: z.boolean().default(true)
 });
 
 export const DynamicSecretRabbitMqSchema = z.object({
@@ -131,6 +150,7 @@ export const DynamicSecretRabbitMqSchema = z.object({
   password: z.string().trim().min(1),
 
   ca: z.string().optional(),
+  sslRejectUnauthorized: z.boolean().default(true),
 
   virtualHost: z.object({
     name: z.string().trim().min(1),
@@ -176,7 +196,9 @@ export const DynamicSecretSqlDBSchema = z.object({
   renewStatement: z.string().trim().optional(),
   ca: z.string().optional(),
   sslEnabled: z.boolean().optional(),
-  gatewayId: z.string().nullable().optional()
+  sslRejectUnauthorized: z.boolean().default(true),
+  gatewayId: z.string().nullable().optional(),
+  gatewayPoolId: z.string().nullable().optional()
 });
 
 export const DynamicSecretClickhouseSchema = z.object({
@@ -211,7 +233,8 @@ export const DynamicSecretClickhouseSchema = z.object({
   revocationStatement: z.string().trim(),
   renewStatement: z.string().trim().optional(),
   ca: z.string().optional(),
-  gatewayId: z.string().nullable().optional()
+  gatewayId: z.string().nullable().optional(),
+  gatewayPoolId: z.string().nullable().optional()
 });
 
 export const DynamicSecretCassandraSchema = z.object({
@@ -224,7 +247,8 @@ export const DynamicSecretCassandraSchema = z.object({
   creationStatement: z.string().trim(),
   revocationStatement: z.string().trim(),
   renewStatement: z.string().trim().optional(),
-  ca: z.string().optional()
+  ca: z.string().optional(),
+  sslRejectUnauthorized: z.boolean().default(true)
 });
 
 export const DynamicSecretSapAseSchema = z.object({
@@ -329,6 +353,7 @@ export const DynamicSecretMongoDBSchema = z.object({
   password: z.string().min(1).trim(),
   database: z.string().min(1).trim(),
   ca: z.string().trim().optional().nullable(),
+  sslRejectUnauthorized: z.boolean().default(true),
   roles: z
     .string()
     .array()
@@ -346,7 +371,8 @@ export const DynamicSecretSapHanaSchema = z.object({
   creationStatement: z.string().trim(),
   revocationStatement: z.string().trim(),
   renewStatement: z.string().trim().optional(),
-  ca: z.string().optional()
+  ca: z.string().optional(),
+  sslRejectUnauthorized: z.boolean().default(true)
 });
 
 export const DynamicSecretSnowflakeSchema = z.object({
@@ -402,7 +428,9 @@ export const DynamicSecretAzureSqlDBSchema = z.object({
   renewStatement: z.string().trim().optional(),
   ca: z.string().optional(),
   sslEnabled: z.boolean().optional(),
-  gatewayId: z.string().nullable().optional()
+  sslRejectUnauthorized: z.boolean().default(true),
+  gatewayId: z.string().nullable().optional(),
+  gatewayPoolId: z.string().nullable().optional()
 });
 
 export const LdapSchema = z.union([
@@ -411,6 +439,7 @@ export const LdapSchema = z.union([
     binddn: z.string().trim().min(1),
     bindpass: z.string().trim().min(1),
     ca: z.string().optional(),
+    sslRejectUnauthorized: z.boolean().default(true),
     credentialType: z.literal(LdapCredentialType.Dynamic).optional().default(LdapCredentialType.Dynamic),
     creationLdif: z.string().min(1),
     revocationLdif: z.string().min(1),
@@ -421,6 +450,7 @@ export const LdapSchema = z.union([
     binddn: z.string().trim().min(1),
     bindpass: z.string().trim().min(1),
     ca: z.string().optional(),
+    sslRejectUnauthorized: z.boolean().default(true),
     credentialType: z.literal(LdapCredentialType.Static),
     rotationLdif: z.string().min(1)
   })
@@ -438,6 +468,7 @@ export const DynamicSecretKubernetesSchema = z
       clusterToken: z.string().trim().optional(),
       ca: z.string().optional(),
       sslEnabled: z.boolean().default(false),
+      sslRejectUnauthorized: z.boolean().default(true),
       credentialType: z.literal(KubernetesCredentialType.Static),
       serviceAccountName: z.string().trim().min(1),
       namespace: z
@@ -449,7 +480,8 @@ export const DynamicSecretKubernetesSchema = z
           (val) => characterValidator([CharacterType.AlphaNumeric, CharacterType.Hyphen])(val),
           "Invalid namespace format"
         ),
-      gatewayId: z.string().optional(),
+      gatewayId: z.string().optional().nullable(),
+      gatewayPoolId: z.string().optional().nullable(),
       audiences: z.array(z.string().trim().min(1)),
       authMethod: z.nativeEnum(KubernetesAuthMethod).default(KubernetesAuthMethod.Api)
     }),
@@ -464,6 +496,7 @@ export const DynamicSecretKubernetesSchema = z
       clusterToken: z.string().trim().optional(),
       ca: z.string().optional(),
       sslEnabled: z.boolean().default(false),
+      sslRejectUnauthorized: z.boolean().default(true),
       credentialType: z.literal(KubernetesCredentialType.Dynamic),
       namespace: z
         .string()
@@ -477,7 +510,8 @@ export const DynamicSecretKubernetesSchema = z
             namespaces.every((ns) => characterValidator([CharacterType.AlphaNumeric, CharacterType.Hyphen])(ns))
           );
         }, "Must be a valid comma-separated list of namespace values"),
-      gatewayId: z.string().optional(),
+      gatewayId: z.string().optional().nullable(),
+      gatewayPoolId: z.string().optional().nullable(),
       audiences: z.array(z.string().trim().min(1)),
       roleType: z.nativeEnum(KubernetesRoleType),
       role: z.string().trim().min(1),
@@ -485,11 +519,18 @@ export const DynamicSecretKubernetesSchema = z
     })
   ])
   .superRefine((data, ctx) => {
-    if (data.authMethod === KubernetesAuthMethod.Gateway && !data.gatewayId) {
+    if (data.gatewayId && data.gatewayPoolId) {
+      ctx.addIssue({
+        path: ["gatewayPoolId"],
+        code: z.ZodIssueCode.custom,
+        message: "Cannot specify both a gateway and a gateway pool"
+      });
+    }
+    if (data.authMethod === KubernetesAuthMethod.Gateway && !data.gatewayId && !data.gatewayPoolId) {
       ctx.addIssue({
         path: ["gatewayId"],
         code: z.ZodIssueCode.custom,
-        message: "When auth method is set to Gateway, a gateway must be selected"
+        message: "When auth method is set to Gateway, a gateway or gateway pool must be selected"
       });
     }
     if (data.authMethod === KubernetesAuthMethod.Api || !data.authMethod) {
@@ -517,6 +558,7 @@ export const DynamicSecretVerticaSchema = z.object({
   password: z.string().trim(),
   database: z.string().trim(),
   gatewayId: z.string().nullable().optional(),
+  gatewayPoolId: z.string().nullable().optional(),
   creationStatement: z.string().trim(),
   revocationStatement: z.string().trim(),
   passwordRequirements: z
@@ -684,6 +726,7 @@ export enum DynamicSecretProviders {
   AwsIam = "aws-iam",
   Redis = "redis",
   AwsElastiCache = "aws-elasticache",
+  AwsMemoryDb = "aws-memorydb",
   MongoAtlas = "mongo-db-atlas",
   ElasticSearch = "elastic-search",
   MongoDB = "mongo-db",
@@ -724,6 +767,7 @@ export const DynamicSecretProviderSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal(DynamicSecretProviders.Redis), inputs: DynamicSecretRedisDBSchema }),
   z.object({ type: z.literal(DynamicSecretProviders.SapHana), inputs: DynamicSecretSapHanaSchema }),
   z.object({ type: z.literal(DynamicSecretProviders.AwsElastiCache), inputs: DynamicSecretAwsElastiCacheSchema }),
+  z.object({ type: z.literal(DynamicSecretProviders.AwsMemoryDb), inputs: DynamicSecretAwsMemoryDbSchema }),
   z.object({ type: z.literal(DynamicSecretProviders.MongoAtlas), inputs: DynamicSecretMongoAtlasSchema }),
   z.object({ type: z.literal(DynamicSecretProviders.ElasticSearch), inputs: DynamicSecretElasticSearchSchema }),
   z.object({ type: z.literal(DynamicSecretProviders.MongoDB), inputs: DynamicSecretMongoDBSchema }),

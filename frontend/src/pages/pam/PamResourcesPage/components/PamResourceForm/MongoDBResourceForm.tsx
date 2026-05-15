@@ -9,14 +9,14 @@ import {
   FieldContent,
   FieldError,
   FieldLabel,
+  Input,
   Label,
   SheetFooter,
   Switch,
   TextArea,
   Tooltip,
   TooltipContent,
-  TooltipTrigger,
-  UnstableInput
+  TooltipTrigger
 } from "@app/components/v3";
 import { PamResourceType, TMongoDBResource } from "@app/hooks/api/pam";
 
@@ -100,12 +100,14 @@ export const MongoDBResourceForm = ({ resource, onSubmit, closeSheet }: Props) =
     defaultValues: resource
       ? {
           ...resource,
-          gateway: resource.gatewayId ? { id: resource.gatewayId, name: "" } : undefined,
+          gatewayId: resource.gatewayId ?? null,
+          gatewayPoolId: resource.gatewayPoolId ?? null,
           connectionDetails: resource.connectionDetails
         }
       : {
           resourceType: PamResourceType.MongoDB,
-          gateway: undefined,
+          gatewayId: null,
+          gatewayPoolId: null,
           connectionDetails: {
             connectionString: "",
             database: "admin",
@@ -156,7 +158,7 @@ export const MongoDBResourceForm = ({ resource, onSubmit, closeSheet }: Props) =
                     </Tooltip>
                   </FieldLabel>
                   <FieldContent>
-                    <UnstableInput
+                    <Input
                       {...field}
                       placeholder="mongodb+srv://cluster0.abc.mongodb.net"
                       isError={Boolean(error)}
@@ -173,7 +175,7 @@ export const MongoDBResourceForm = ({ resource, onSubmit, closeSheet }: Props) =
                 <Field>
                   <FieldLabel>Database Name</FieldLabel>
                   <FieldContent>
-                    <UnstableInput {...field} isError={Boolean(error)} />
+                    <Input {...field} isError={Boolean(error)} />
                     <FieldError errors={[error]} />
                   </FieldContent>
                 </Field>

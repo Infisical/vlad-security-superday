@@ -4,14 +4,17 @@ import { z } from "zod";
 import { OrgPermissionSubjects } from "@app/context";
 import {
   OrgGatewayPermissionActions,
+  OrgGatewayPoolPermissionActions,
   OrgPermissionAppConnectionActions,
   OrgPermissionAuditLogsActions,
   OrgPermissionBillingActions,
   OrgPermissionEmailDomainActions,
   OrgPermissionGroupActions,
+  OrgPermissionHoneyTokenActions,
   OrgPermissionIdentityActions,
   OrgPermissionKmipActions,
   OrgPermissionMachineIdentityAuthTemplateActions,
+  OrgPermissionProjectActions,
   OrgPermissionSecretShareAction,
   OrgPermissionSsoActions,
   OrgPermissionSubOrgActions,
@@ -47,6 +50,12 @@ const emailDomainPermissionSchema = z
     [OrgPermissionEmailDomainActions.Create]: z.boolean().optional(),
     [OrgPermissionEmailDomainActions.VerifyDomain]: z.boolean().optional(),
     [OrgPermissionEmailDomainActions.Delete]: z.boolean().optional()
+  })
+  .optional();
+
+const honeyTokenPermissionSchema = z
+  .object({
+    [OrgPermissionHoneyTokenActions.Setup]: z.boolean().optional()
   })
   .optional();
 
@@ -99,7 +108,18 @@ const orgGatewayPermissionSchema = z
     [OrgGatewayPermissionActions.EditGateways]: z.boolean().optional(),
     [OrgGatewayPermissionActions.DeleteGateways]: z.boolean().optional(),
     [OrgGatewayPermissionActions.CreateGateways]: z.boolean().optional(),
-    [OrgGatewayPermissionActions.AttachGateways]: z.boolean().optional()
+    [OrgGatewayPermissionActions.AttachGateways]: z.boolean().optional(),
+    [OrgGatewayPermissionActions.RevokeGatewayAccess]: z.boolean().optional()
+  })
+  .optional();
+
+const orgGatewayPoolPermissionSchema = z
+  .object({
+    [OrgGatewayPoolPermissionActions.ListGatewayPools]: z.boolean().optional(),
+    [OrgGatewayPoolPermissionActions.CreateGatewayPools]: z.boolean().optional(),
+    [OrgGatewayPoolPermissionActions.EditGatewayPools]: z.boolean().optional(),
+    [OrgGatewayPoolPermissionActions.DeleteGatewayPools]: z.boolean().optional(),
+    [OrgGatewayPoolPermissionActions.AttachGatewayPools]: z.boolean().optional()
   })
   .optional();
 
@@ -126,6 +146,13 @@ const machineIdentityAuthTemplatePermissionSchema = z
 const adminConsolePermissionSchmea = z
   .object({
     "access-all-projects": z.boolean().optional()
+  })
+  .optional();
+
+const projectPermissionSchema = z
+  .object({
+    [OrgPermissionProjectActions.Create]: z.boolean().optional(),
+    [OrgPermissionProjectActions.RequestAccess]: z.boolean().optional()
   })
   .optional();
 
@@ -164,11 +191,7 @@ export const formSchema = z.object({
     .refine((val) => val !== "custom", { message: "Cannot use custom as its a keyword" }),
   permissions: z
     .object({
-      project: z
-        .object({
-          create: z.boolean().optional()
-        })
-        .optional(),
+      project: projectPermissionSchema,
       "audit-logs": auditLogsPermissionSchema,
       member: generalPermissionSchema,
       groups: groupPermissionSchema,
@@ -189,11 +212,13 @@ export const formSchema = z.object({
       "app-connections": appConnectionsPermissionSchema,
       kmip: kmipPermissionSchema,
       gateway: orgGatewayPermissionSchema,
+      "gateway-pool": orgGatewayPoolPermissionSchema,
       relay: orgRelayPermissionSchema,
       "machine-identity-auth-template": machineIdentityAuthTemplatePermissionSchema,
       "secret-share": secretSharingPermissionSchema,
       "sub-organization": subOrganizationPermissionSchema,
-      "email-domains": emailDomainPermissionSchema
+      "email-domains": emailDomainPermissionSchema,
+      "honey-tokens": honeyTokenPermissionSchema
     })
     .optional()
 });

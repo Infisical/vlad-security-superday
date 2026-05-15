@@ -54,19 +54,12 @@ import { TWebhookPayloads } from "@app/services/webhook/webhook-types";
 export const JOB_SCHEDULER_PREFIX = "jsv1";
 
 export enum QueueName {
-  SecretRotation = "secret-rotation",
   SecretReminder = "secret-reminder",
   AuditLog = "audit-log",
   // TODO(akhilmhdh): This will get removed later. For now this is kept to stop the repeatable queue
   AuditLogPrune = "audit-log-prune",
-  DailyResourceCleanUp = "daily-resource-cleanup",
-  FrequentResourceCleanUp = "frequent-resource-cleanup",
-  DailyExpiringPkiItemAlert = "daily-expiring-pki-item-alert",
-  DailyPkiAlertV2Processing = "daily-pki-alert-v2-processing",
   PkiAlertV2Event = "pki-alert-v2-event",
-  PkiSyncCleanup = "pki-sync-cleanup",
   PkiSubscriber = "pki-subscriber",
-  TelemetryInstanceStats = "telemtry-self-hosted-stats",
   IntegrationSync = "sync-integrations",
   SecretWebhook = "secret-webhook",
   SecretFullRepoScan = "secret-full-repo-scan",
@@ -89,13 +82,7 @@ export enum QueueName {
   FolderTreeCheckpoint = "folder-tree-checkpoint",
   InvalidateCache = "invalidate-cache",
   SecretScanningV2 = "secret-scanning-v2",
-  TelemetryAggregatedEvents = "telemetry-aggregated-events",
-  DailyReminders = "daily-reminders",
-  SecretReminderMigration = "secret-reminder-migration",
   UserNotification = "user-notification",
-  HealthAlert = "health-alert",
-  CertificateV3AutoRenewal = "certificate-v3-auto-renewal",
-  PamAccountRotation = "pam-account-rotation",
   PamSessionExpiration = "pam-session-expiration",
   PamSessionAiSummary = "pam-session-ai-summary",
   PkiAcmeChallengeValidation = "pki-acme-challenge-validation",
@@ -105,12 +92,11 @@ export enum QueueName {
   AuditLogClickHouseBatch = "audit-log-clickhouse-batch",
   PamDiscoveryScan = "pam-discovery-scan",
   CaAutoRenewal = "ca-auto-renewal",
-  CertificateCleanup = "certificate-cleanup"
+  DigiCertOrderPolling = "digicert-order-polling"
 }
 
 export enum QueueJobs {
   SecretReminder = "secret-reminder-job",
-  SecretRotation = "secret-rotation-job",
   AuditLog = "audit-log-job",
   // TODO(akhilmhdh): This will get removed later. For now this is kept to stop the repeatable queue
   AuditLogPrune = "audit-log-prune-job",
@@ -177,7 +163,8 @@ export enum QueueJobs {
   CaVenafiInstall = "ca-venafi-install-job",
   CaAdcsInstall = "ca-adcs-install-job",
   CertificateCleanup = "certificate-cleanup-job",
-  DailySecretSyncRetry = "daily-secret-sync-retry-job"
+  DailySecretSyncRetry = "daily-secret-sync-retry-job",
+  DigiCertOrderPolling = "digicert-order-polling-job"
 }
 
 export type TQueueOptions = {
@@ -211,25 +198,9 @@ export type TQueueJobTypes = {
     };
     name: QueueJobs.SecretReminder;
   };
-  [QueueName.SecretRotation]: {
-    payload: { rotationId: string };
-    name: QueueJobs.SecretRotation;
-  };
   [QueueName.AuditLog]: {
     name: QueueJobs.AuditLog;
     payload: TCreateAuditLogDTO;
-  };
-  [QueueName.DailyResourceCleanUp]: {
-    name: QueueJobs.DailyResourceCleanUp;
-    payload: undefined;
-  };
-  [QueueName.DailyExpiringPkiItemAlert]: {
-    name: QueueJobs.DailyExpiringPkiItemAlert;
-    payload: undefined;
-  };
-  [QueueName.DailyPkiAlertV2Processing]: {
-    name: QueueJobs.DailyPkiAlertV2Processing;
-    payload: undefined;
   };
   [QueueName.PkiAlertV2Event]: {
     name: QueueJobs.PkiAlertV2ProcessEvent;
@@ -238,10 +209,6 @@ export type TQueueJobTypes = {
       projectId: string;
       eventType: PkiAlertEventType;
     };
-  };
-  [QueueName.PkiSyncCleanup]: {
-    name: QueueJobs.PkiSyncCleanup;
-    payload: undefined;
   };
   [QueueName.AuditLogPrune]: {
     name: QueueJobs.AuditLogPrune;
@@ -288,10 +255,6 @@ export type TQueueJobTypes = {
         keyEncoding: SecretKeyEncoding;
       };
     };
-  };
-  [QueueName.TelemetryInstanceStats]: {
-    name: QueueJobs.TelemetryInstanceStats;
-    payload: undefined;
   };
   [QueueName.DynamicSecretLeaseRevocationFailedEmail]: {
     name: QueueJobs.DynamicSecretLeaseRevocationFailedEmail;
@@ -451,37 +414,13 @@ export type TQueueJobTypes = {
       locality?: string;
     };
   };
-  [QueueName.DailyReminders]: {
-    name: QueueJobs.DailyReminders;
-    payload: undefined;
-  };
-  [QueueName.SecretReminderMigration]: {
-    name: QueueJobs.SecretReminderMigration;
-    payload: undefined;
-  };
   [QueueName.PkiSubscriber]: {
     name: QueueJobs.PkiSubscriberDailyAutoRenewal;
-    payload: undefined;
-  };
-  [QueueName.TelemetryAggregatedEvents]: {
-    name: QueueJobs.TelemetryAggregatedEvents;
     payload: undefined;
   };
   [QueueName.UserNotification]: {
     name: QueueJobs.UserNotification;
     payload: { notifications: TCreateUserNotificationDTO[] };
-  };
-  [QueueName.HealthAlert]: {
-    name: QueueJobs.HealthAlert;
-    payload: undefined;
-  };
-  [QueueName.CertificateV3AutoRenewal]: {
-    name: QueueJobs.CertificateV3DailyAutoRenewal;
-    payload: undefined;
-  };
-  [QueueName.PamAccountRotation]: {
-    name: QueueJobs.PamAccountRotation;
-    payload: undefined;
   };
   [QueueName.PamSessionExpiration]: {
     name: QueueJobs.PamSessionExpiration;
@@ -494,10 +433,6 @@ export type TQueueJobTypes = {
   [QueueName.PkiAcmeChallengeValidation]: {
     name: QueueJobs.PkiAcmeChallengeValidation;
     payload: { challengeId: string };
-  };
-  [QueueName.FrequentResourceCleanUp]: {
-    name: QueueJobs.FrequentResourceCleanUp;
-    payload: undefined;
   };
   [QueueName.PkiDiscoveryScan]:
     | {
@@ -547,8 +482,8 @@ export type TQueueJobTypes = {
         name: QueueJobs.CaAdcsInstall;
         payload: { caId: string; maxPathLength?: number };
       };
-  [QueueName.CertificateCleanup]: {
-    name: QueueJobs.CertificateCleanup;
+  [QueueName.DigiCertOrderPolling]: {
+    name: QueueJobs.DigiCertOrderPolling;
     payload: undefined;
   };
 };
@@ -647,9 +582,29 @@ export const queueServiceFactory = (redisCfg: TRedisConfigKeys): TQueueServiceFa
     Record<QueueName, Worker<TQueueJobTypes[QueueName]["payload"], void, TQueueJobTypes[QueueName]["name"]>>
   > = {};
 
-  // Remove orphaned job schedulers left in Redis by the QueueInternalRecovery/QueueInternalReconciliation deleted queues.
+  // Remove orphaned job schedulers left in Redis by deleted queues.
+  // Queues migrated to the cronJob system (cron-job.ts) are listed here so their
+  // BullMQ schedulers and pending jobs are cleaned up on first boot of the new image.
   void (async () => {
-    const staleQueueNames = ["queue-internal-recovery", "queue-internal-reconciliation"];
+    const staleQueueNames = [
+      "queue-internal-recovery",
+      "queue-internal-reconciliation",
+      "secret-rotation",
+      // Queues replaced by cronJobFactory (src/lib/cron/cron-job.ts)
+      "daily-resource-cleanup",
+      "frequent-resource-cleanup",
+      "daily-reminders",
+      "secret-reminder-migration",
+      "health-alert",
+      "certificate-cleanup",
+      "pki-sync-cleanup",
+      "pam-account-rotation",
+      "daily-pki-alert-v2-processing",
+      "daily-expiring-pki-item-alert",
+      "telemtry-self-hosted-stats", // note: typo from original enum value
+      "telemetry-aggregated-events",
+      "certificate-v3-auto-renewal"
+    ];
     await Promise.allSettled(
       staleQueueNames.map(async (name) => {
         const staleQueue = new Queue(name, {
@@ -659,6 +614,40 @@ export const queueServiceFactory = (redisCfg: TRedisConfigKeys): TQueueServiceFa
         await staleQueue.obliterate({ force: true });
         await staleQueue.close();
         logger.info({ queue: name }, "Cleaned up orphaned internal queue from Redis");
+      })
+    );
+
+    // Remove stale BullMQ schedulers for queues migrated to cronJobFactory.
+    // Without this, the old scheduler keeps firing via the active Worker, causing double execution.
+    const staleSchedulersInActiveQueues: Array<{ queueName: string; schedulerId: string }> = [
+      { queueName: "pki-subscriber", schedulerId: `${JOB_SCHEDULER_PREFIX}:pki-subscriber` },
+      { queueName: "pki-discovery-scan", schedulerId: `${JOB_SCHEDULER_PREFIX}:pki-discovery-scheduled-scan` },
+      { queueName: "pam-discovery-scan", schedulerId: `${JOB_SCHEDULER_PREFIX}:pam-discovery-scheduled-scan` },
+      { queueName: "secret-rotation-v2", schedulerId: `${JOB_SCHEDULER_PREFIX}:secret-rotation-v2-cron` },
+      {
+        queueName: "app-connection-credential-rotation",
+        schedulerId: `${JOB_SCHEDULER_PREFIX}:app-connection-credential-rotation-cron`
+      },
+      { queueName: "app-connection-secret-sync", schedulerId: `${JOB_SCHEDULER_PREFIX}:daily-secret-sync-retry-job` },
+      { queueName: "ca-auto-renewal", schedulerId: `${JOB_SCHEDULER_PREFIX}:ca-daily-auto-renewal` }
+    ];
+    await Promise.allSettled(
+      staleSchedulersInActiveQueues.map(async ({ queueName, schedulerId }) => {
+        const q = new Queue(queueName, {
+          prefix: isClusterMode ? `{${queueName}}` : undefined,
+          connection
+        });
+        try {
+          await q.removeJobScheduler(schedulerId);
+          logger.info({ queue: queueName, schedulerId }, "Removed orphaned job scheduler from active queue");
+        } catch (err) {
+          logger.warn(
+            { err, queue: queueName, schedulerId },
+            "Failed to remove orphaned job scheduler from active queue"
+          );
+        } finally {
+          await q.close();
+        }
       })
     );
   })();

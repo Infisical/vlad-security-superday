@@ -2,10 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { CheckIcon, LockIcon, PencilIcon, UnlockIcon } from "lucide-react";
 
 import { ProjectPermissionCan } from "@app/components/permissions";
-import { Detail, DetailLabel, DetailValue, UnstableIconButton } from "@app/components/v3";
+import { Detail, DetailLabel, DetailValue, IconButton } from "@app/components/v3";
 import { ProjectPermissionActions, ProjectPermissionSub } from "@app/context";
 import { gatewaysQueryKeys } from "@app/hooks/api";
-import { PamResourceType, TPamResource, useGetPamResourceById } from "@app/hooks/api/pam";
+import { useListGatewayPools } from "@app/hooks/api/gateway-pools/queries";
+import { PamResourceType, TPamResource } from "@app/hooks/api/pam";
 
 type Props = {
   resource: TPamResource;
@@ -152,18 +153,10 @@ const AwsIamConnectionDetails = ({
 );
 
 const WindowsConnectionDetails = ({
-  connectionDetails,
-  adServerResourceId
+  connectionDetails
 }: {
   connectionDetails: { protocol: string; hostname: string; port: number };
-  adServerResourceId?: string | null;
 }) => {
-  const { data: adResource } = useGetPamResourceById(
-    PamResourceType.ActiveDirectory,
-    adServerResourceId || undefined,
-    { enabled: !!adServerResourceId }
-  );
-
   return (
     <>
       <Detail>
@@ -178,42 +171,16 @@ const WindowsConnectionDetails = ({
         <DetailLabel>Port</DetailLabel>
         <DetailValue>{connectionDetails.port}</DetailValue>
       </Detail>
-      {adResource && (
-        <Detail>
-          <DetailLabel>AD Resource</DetailLabel>
-          <DetailValue>{adResource.name}</DetailValue>
-        </Detail>
-      )}
     </>
   );
 };
-
-const ActiveDirectoryConnectionDetails = ({
-  connectionDetails
-}: {
-  connectionDetails: { domain: string; dcAddress: string; port: number };
-}) => (
-  <>
-    <Detail>
-      <DetailLabel>Domain</DetailLabel>
-      <DetailValue>{connectionDetails.domain}</DetailValue>
-    </Detail>
-    <Detail>
-      <DetailLabel>DC Address</DetailLabel>
-      <DetailValue>{connectionDetails.dcAddress}</DetailValue>
-    </Detail>
-    <Detail>
-      <DetailLabel>Port</DetailLabel>
-      <DetailValue>{connectionDetails.port}</DetailValue>
-    </Detail>
-  </>
-);
 
 const ConnectionDetailsContent = ({ resource }: Props) => {
   switch (resource.resourceType) {
     case PamResourceType.Postgres:
     case PamResourceType.MySQL:
     case PamResourceType.MsSQL:
+    case PamResourceType.OracleDB:
       return <SqlConnectionDetails connectionDetails={resource.connectionDetails} />;
     case PamResourceType.MongoDB:
       return <MongoDBConnectionDetails connectionDetails={resource.connectionDetails} />;
@@ -226,14 +193,7 @@ const ConnectionDetailsContent = ({ resource }: Props) => {
     case PamResourceType.AwsIam:
       return <AwsIamConnectionDetails connectionDetails={resource.connectionDetails} />;
     case PamResourceType.Windows:
-      return (
-        <WindowsConnectionDetails
-          connectionDetails={resource.connectionDetails}
-          adServerResourceId={resource.adServerResourceId}
-        />
-      );
-    case PamResourceType.ActiveDirectory:
-      return <ActiveDirectoryConnectionDetails connectionDetails={resource.connectionDetails} />;
+      return <WindowsConnectionDetails connectionDetails={resource.connectionDetails} />;
     default:
       return null;
   }
@@ -244,8 +204,10 @@ export const PamResourceConnectionSection = ({
   onEdit
 }: Props & { onEdit: VoidFunction }) => {
   const { data: gateways } = useQuery(gatewaysQueryKeys.list());
+  const { data: pools } = useListGatewayPools();
 
   const gateway = gateways?.find((g) => g.id === resource.gatewayId);
+  const pool = pools?.find((p) => p.id === resource.gatewayPoolId);
 
   return (
     <div className="flex w-full flex-col gap-3 rounded-lg border border-border bg-container px-4 py-3">
@@ -256,9 +218,9 @@ export const PamResourceConnectionSection = ({
           a={ProjectPermissionSub.PamResources}
         >
           {(isAllowed) => (
-            <UnstableIconButton variant="ghost" size="xs" onClick={onEdit} isDisabled={!isAllowed}>
+            <IconButton variant="ghost" size="xs" onClick={onEdit} isDisabled={!isAllowed}>
               <PencilIcon />
-            </UnstableIconButton>
+            </IconButton>
           )}
         </ProjectPermissionCan>
       </div>
@@ -267,6 +229,12 @@ export const PamResourceConnectionSection = ({
           <Detail>
             <DetailLabel>Gateway</DetailLabel>
             <DetailValue>{gateway?.name ?? "Unknown"}</DetailValue>
+          </Detail>
+        )}
+        {resource.gatewayPoolId && (
+          <Detail>
+            <DetailLabel>Gateway Pool</DetailLabel>
+            <DetailValue>{pool?.name ?? "Unknown"}</DetailValue>
           </Detail>
         )}
         <ConnectionDetailsContent resource={resource} />

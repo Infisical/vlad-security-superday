@@ -15,7 +15,9 @@ import { OrgPermissionSsoActions, OrgPermissionSubjects } from "@app/ee/services
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, ForbiddenRequestError, NotFoundError, OidcAuthError } from "@app/lib/errors";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
 import { RequestContextKey } from "@app/lib/request-context/request-context-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { AuthAttemptAuthMethod, AuthAttemptAuthResult, authAttemptCounter } from "@app/lib/telemetry/metrics";
 import { OrgServiceActor } from "@app/lib/types";
 import {
@@ -40,6 +42,8 @@ import { TProjectKeyDALFactory } from "@app/services/project-key/project-key-dal
 import { SmtpTemplates, TSmtpService } from "@app/services/smtp/smtp-service";
 import { getServerCfg } from "@app/services/super-admin/super-admin-service";
 import { LoginMethod } from "@app/services/super-admin/super-admin-types";
+import { TTelemetryServiceFactory } from "@app/services/telemetry/telemetry-service";
+import { PostHogEventTypes } from "@app/services/telemetry/telemetry-types";
 import { TUserDALFactory } from "@app/services/user/user-dal";
 import { TUserAliasDALFactory } from "@app/services/user-alias/user-alias-dal";
 import { UserAliasType } from "@app/services/user-alias/user-alias-types";
@@ -96,6 +100,7 @@ type TOidcConfigServiceFactoryDep = {
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   loginService: Pick<TAuthLoginFactory, "processProviderCallback">;
   emailDomainDAL: Pick<TEmailDomainDALFactory, "findOne">;
+  telemetryService: Pick<TTelemetryServiceFactory, "sendPostHogEvents">;
 };
 
 export type TOidcConfigServiceFactory = ReturnType<typeof oidcConfigServiceFactory>;
@@ -119,7 +124,8 @@ export const oidcConfigServiceFactory = ({
   auditLogService,
   kmsService,
   loginService,
-  emailDomainDAL
+  emailDomainDAL,
+  telemetryService
 }: TOidcConfigServiceFactoryDep) => {
   const getOidc = async (dto: TGetOidcCfgDTO) => {
     const oidcCfg = await oidcConfigDAL.findOne({
@@ -197,7 +203,6 @@ export const oidcConfigServiceFactory = ({
       });
     }
 
-    // Verify that the email domain (if verified on the platform) belongs to this org
     await verifyEmailDomainOwnership({ email, orgId, emailDomainDAL });
     const sanitizedEmail = sanitizeEmail(email);
     validateEmail(sanitizedEmail);
@@ -208,7 +213,7 @@ export const oidcConfigServiceFactory = ({
       aliasType: UserAliasType.OIDC
     });
 
-    const organization = await orgDAL.findOrgById(orgId);
+    const organization = await requestMemoize(requestMemoKeys.orgFindOrgById(orgId), () => orgDAL.findOrgById(orgId));
     if (!organization) throw new NotFoundError({ message: `Organization with ID '${orgId}' not found` });
 
     let user: TUsers;
@@ -255,6 +260,7 @@ export const oidcConfigServiceFactory = ({
         return foundUser;
       });
     } else {
+      let isNewUser = false;
       user = await userDAL.transaction(async (tx) => {
         let newUser: TUsers | undefined;
         // we prioritize getting the most complete user to create the new alias under
@@ -277,6 +283,7 @@ export const oidcConfigServiceFactory = ({
             },
             tx
           );
+          isNewUser = true;
         }
 
         userAlias = await userAliasDAL.create(
@@ -327,6 +334,19 @@ export const oidcConfigServiceFactory = ({
 
         return newUser;
       });
+
+      if (isNewUser) {
+        void telemetryService.sendPostHogEvents({
+          event: PostHogEventTypes.UserSignedUp,
+          distinctId: user.username ?? "",
+          organizationId: orgId,
+          properties: {
+            username: user.username,
+            email: user.email ?? "",
+            signupMethod: "oidc"
+          }
+        });
+      }
     }
 
     if (manageGroupMemberships) {
@@ -420,7 +440,7 @@ export const oidcConfigServiceFactory = ({
       await smtpService
         .sendMail({
           template: SmtpTemplates.EmailVerification,
-          subjectLine: "Infisical confirmation code",
+          subjectLine: `Infisical confirmation code: ${token}`,
           recipients: [user.email],
           substitutions: {
             code: token

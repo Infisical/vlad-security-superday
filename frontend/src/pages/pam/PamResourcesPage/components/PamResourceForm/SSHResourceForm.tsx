@@ -8,8 +8,8 @@ import {
   FieldContent,
   FieldError,
   FieldLabel,
-  SheetFooter,
-  UnstableInput
+  Input,
+  SheetFooter
 } from "@app/components/v3";
 import { PamResourceType, TSSHResource } from "@app/hooks/api/pam";
 
@@ -43,11 +43,13 @@ export const SSHResourceForm = ({ resource, onSubmit, closeSheet }: Props) => {
     defaultValues: resource
       ? {
           ...resource,
-          gateway: resource.gatewayId ? { id: resource.gatewayId, name: "" } : undefined
+          gatewayId: resource.gatewayId ?? null,
+          gatewayPoolId: resource.gatewayPoolId ?? null
         }
       : {
           resourceType: PamResourceType.SSH,
-          gateway: undefined,
+          gatewayId: null,
+          gatewayPoolId: null,
           connectionDetails: {
             host: "",
             port: 22
@@ -77,7 +79,7 @@ export const SSHResourceForm = ({ resource, onSubmit, closeSheet }: Props) => {
                 <Field className="flex-1">
                   <FieldLabel>Host</FieldLabel>
                   <FieldContent>
-                    <UnstableInput
+                    <Input
                       {...field}
                       isError={Boolean(error)}
                       placeholder="example.com or 192.168.1.1"
@@ -94,7 +96,7 @@ export const SSHResourceForm = ({ resource, onSubmit, closeSheet }: Props) => {
                 <Field className="w-28">
                   <FieldLabel>Port</FieldLabel>
                   <FieldContent>
-                    <UnstableInput type="number" {...field} isError={Boolean(error)} />
+                    <Input type="number" {...field} isError={Boolean(error)} />
                     <FieldError errors={[error]} />
                   </FieldContent>
                 </Field>

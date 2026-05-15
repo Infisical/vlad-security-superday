@@ -37,6 +37,11 @@ import { SecretV3RawSanitized } from "@app/hooks/api/secrets/types";
 import { DiscriminativePick } from "@app/types";
 
 import {
+  TDatadogApplicationKeySecretRotation,
+  TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse,
+  TDatadogApplicationKeySecretRotationOption
+} from "./datadog-application-key-secret-rotation";
+import {
   TDbtServiceTokenRotation,
   TDbtServiceTokenRotationGeneratedCredentialsResponse,
   TDbtServiceTokenRotationOption
@@ -75,6 +80,11 @@ import {
   TRedisCredentialsRotationOption
 } from "./redis-credentials-rotation";
 import {
+  TSupabaseApiKeyRotation,
+  TSupabaseApiKeyRotationGeneratedCredentialsResponse,
+  TSupabaseApiKeyRotationOption
+} from "./supabase-api-key-rotation";
+import {
   TUnixLinuxLocalAccountRotation,
   TUnixLinuxLocalAccountRotationGeneratedCredentialsResponse,
   TUnixLinuxLocalAccountRotationOption
@@ -103,6 +113,8 @@ export type TSecretRotationV2 = (
   | TWindowsLocalAccountRotation
   | TOpenRouterApiKeyRotation
   | THpIloRotation
+  | TSupabaseApiKeyRotation
+  | TDatadogApplicationKeySecretRotation
 ) & {
   secrets: (SecretV3RawSanitized | null)[];
 };
@@ -121,7 +133,9 @@ export type TSecretRotationV2Option =
   | TDbtServiceTokenRotationOption
   | TWindowsLocalAccountRotationOption
   | TOpenRouterApiKeyRotationOption
-  | THpIloRotationOption;
+  | THpIloRotationOption
+  | TSupabaseApiKeyRotationOption
+  | TDatadogApplicationKeySecretRotationOption;
 
 export type TListSecretRotationV2Options = { secretRotationOptions: TSecretRotationV2Option[] };
 
@@ -144,7 +158,9 @@ export type TViewSecretRotationGeneratedCredentialsResponse =
   | TDbtServiceTokenRotationGeneratedCredentialsResponse
   | TWindowsLocalAccountRotationGeneratedCredentialsResponse
   | TOpenRouterApiKeyRotationGeneratedCredentialsResponse
-  | THpIloRotationGeneratedCredentialsResponse;
+  | THpIloRotationGeneratedCredentialsResponse
+  | TSupabaseApiKeyRotationGeneratedCredentialsResponse
+  | TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse;
 
 export type TCreateSecretRotationV2DTO = DiscriminativePick<
   TSecretRotationV2,
@@ -182,6 +198,17 @@ export type TDeleteSecretRotationV2DTO = TRotateSecretRotationV2DTO & {
   deleteSecrets: boolean;
 };
 
+export type TMoveSecretRotationV2DTO = {
+  type: SecretRotation;
+  rotationId: string;
+  destinationEnvironment: string;
+  destinationSecretPath: string;
+  overwriteDestination: boolean;
+  // required for query invalidation
+  projectId: string;
+  secretPath: string;
+};
+
 export type TViewSecretRotationV2GeneratedCredentialsDTO = {
   rotationId: string;
   type: SecretRotation;
@@ -205,6 +232,8 @@ export type TSecretRotationOptionMap = {
   [SecretRotation.WindowsLocalAccount]: TWindowsLocalAccountRotationOption;
   [SecretRotation.OpenRouterApiKey]: TOpenRouterApiKeyRotationOption;
   [SecretRotation.HpIloLocalAccount]: THpIloRotationOption;
+  [SecretRotation.SupabaseApiKey]: TSupabaseApiKeyRotationOption;
+  [SecretRotation.DatadogApplicationKeySecret]: TDatadogApplicationKeySecretRotationOption;
 };
 
 export type TSecretRotationGeneratedCredentialsResponseMap = {
@@ -225,6 +254,8 @@ export type TSecretRotationGeneratedCredentialsResponseMap = {
   [SecretRotation.WindowsLocalAccount]: TWindowsLocalAccountRotationGeneratedCredentialsResponse;
   [SecretRotation.OpenRouterApiKey]: TOpenRouterApiKeyRotationGeneratedCredentialsResponse;
   [SecretRotation.HpIloLocalAccount]: THpIloRotationGeneratedCredentialsResponse;
+  [SecretRotation.SupabaseApiKey]: TSupabaseApiKeyRotationGeneratedCredentialsResponse;
+  [SecretRotation.DatadogApplicationKeySecret]: TDatadogApplicationKeySecretRotationGeneratedCredentialsResponse;
 };
 
 // Unified type for local account reconciliation (Unix/Linux, Windows, and HP iLO)
@@ -243,4 +274,9 @@ export type TReconcileLocalAccountRotationResponse = {
   message: string;
   reconciled: boolean;
   secretRotation: TUnixLinuxLocalAccountRotation | TWindowsLocalAccountRotation | THpIloRotation;
+};
+
+export type TCheckSecretRotationV2CredentialsDTO = {
+  rotationId: string;
+  type: SecretRotation;
 };

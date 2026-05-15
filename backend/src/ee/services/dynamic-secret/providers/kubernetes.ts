@@ -1,7 +1,8 @@
-import axios, { AxiosError } from "axios";
+import { AxiosError, isAxiosError } from "axios";
 import https from "https";
 
 import { TDynamicSecrets } from "@app/db/schemas";
+import { request } from "@app/lib/config/request";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
 import { GatewayHttpProxyActions, GatewayProxyProtocol, withGatewayProxy } from "@app/lib/gateway";
@@ -14,6 +15,7 @@ import {
   TDynamicSecretKubernetesLeaseConfig
 } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { TGatewayServiceFactory } from "../../gateway/gateway-service";
+import { TGatewayPoolServiceFactory } from "../../gateway-pool/gateway-pool-service";
 import { TGatewayV2ServiceFactory } from "../../gateway-v2/gateway-v2-service";
 import {
   DynamicSecretKubernetesSchema,
@@ -32,15 +34,17 @@ const GATEWAY_AUTH_DEFAULT_URL = "https://kubernetes.default.svc.cluster.local";
 type TKubernetesProviderDTO = {
   gatewayService: Pick<TGatewayServiceFactory, "fnGetGatewayClientTlsByGatewayId">;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
 };
 
 export const KubernetesProvider = ({
   gatewayService,
-  gatewayV2Service
+  gatewayV2Service,
+  gatewayPoolService
 }: TKubernetesProviderDTO): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await DynamicSecretKubernetesSchema.parseAsync(inputs);
-    if (!providerInputs.gatewayId && providerInputs.url) {
+    if (!providerInputs.gatewayId && !providerInputs.gatewayPoolId && providerInputs.url) {
       await blockLocalAndPrivateIpAddresses(providerInputs.url);
     }
 
@@ -135,7 +139,7 @@ export const KubernetesProvider = ({
       for await (const namespace of namespaces) {
         try {
           // 1. Create a test service account
-          await axios.post(
+          await request.post(
             `${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts`,
             {
               metadata: {
@@ -171,7 +175,7 @@ export const KubernetesProvider = ({
             ...(providerInputs.roleType !== KubernetesRoleType.ClusterRole && { namespace })
           };
 
-          await axios.post(
+          await request.post(
             roleBindingUrl,
             {
               metadata: roleBindingMetadata,
@@ -206,7 +210,7 @@ export const KubernetesProvider = ({
           );
 
           // 3. Request a token for the test service account
-          await axios.post(
+          await request.post(
             `${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${serviceAccountName}/token`,
             {
               spec: {
@@ -233,7 +237,7 @@ export const KubernetesProvider = ({
 
           // 4. Cleanup: delete role binding and service account
           if (providerInputs.roleType === KubernetesRoleType.Role) {
-            await axios.delete(
+            await request.delete(
               `${baseUrl}/apis/rbac.authorization.k8s.io/v1/namespaces/${namespace}/rolebindings/${roleBindingName}`,
               {
                 headers: {
@@ -252,24 +256,27 @@ export const KubernetesProvider = ({
               }
             );
           } else {
-            await axios.delete(`${baseUrl}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${roleBindingName}`, {
-              headers: {
-                "Content-Type": "application/json",
-                ...(providerInputs.authMethod === KubernetesAuthMethod.Gateway
-                  ? { "x-infisical-action": GatewayHttpProxyActions.UseGatewayK8sServiceAccount }
-                  : { Authorization: `Bearer ${providerInputs.clusterToken}` })
-              },
-              ...(providerInputs.authMethod === KubernetesAuthMethod.Api
-                ? {
-                    httpsAgent
-                  }
-                : {}),
-              signal: AbortSignal.timeout(EXTERNAL_REQUEST_TIMEOUT),
-              timeout: EXTERNAL_REQUEST_TIMEOUT
-            });
+            await request.delete(
+              `${baseUrl}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${roleBindingName}`,
+              {
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(providerInputs.authMethod === KubernetesAuthMethod.Gateway
+                    ? { "x-infisical-action": GatewayHttpProxyActions.UseGatewayK8sServiceAccount }
+                    : { Authorization: `Bearer ${providerInputs.clusterToken}` })
+                },
+                ...(providerInputs.authMethod === KubernetesAuthMethod.Api
+                  ? {
+                      httpsAgent
+                    }
+                  : {}),
+                signal: AbortSignal.timeout(EXTERNAL_REQUEST_TIMEOUT),
+                timeout: EXTERNAL_REQUEST_TIMEOUT
+              }
+            );
           }
 
-          await axios.delete(`${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${serviceAccountName}`, {
+          await request.delete(`${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${serviceAccountName}`, {
             headers: {
               "Content-Type": "application/json",
               ...(providerInputs.authMethod === KubernetesAuthMethod.Gateway
@@ -305,7 +312,7 @@ export const KubernetesProvider = ({
 
       const baseUrl = port ? `${host}:${port}` : host;
 
-      await axios.get(
+      await request.get(
         `${baseUrl}/api/v1/namespaces/${providerInputs.namespace}/serviceaccounts/${providerInputs.serviceAccountName}`,
         {
           headers: {
@@ -337,15 +344,16 @@ export const KubernetesProvider = ({
         providerInputs.ca && providerInputs.sslEnabled
           ? new https.Agent({
               ca: providerInputs.ca,
-              rejectUnauthorized: true
+              rejectUnauthorized: providerInputs.sslRejectUnauthorized
             })
           : undefined;
 
-      if (providerInputs.gatewayId) {
+      const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId(providerInputs);
+      if (effectiveGatewayId) {
         if (providerInputs.authMethod === KubernetesAuthMethod.Gateway) {
           await $gatewayProxyWrapper(
             {
-              gatewayId: providerInputs.gatewayId,
+              gatewayId: effectiveGatewayId,
               targetHost: k8sHost,
               targetPort: k8sPort,
               httpsAgent,
@@ -358,7 +366,7 @@ export const KubernetesProvider = ({
         } else {
           await $gatewayProxyWrapper(
             {
-              gatewayId: providerInputs.gatewayId,
+              gatewayId: effectiveGatewayId,
               targetHost: k8sGatewayHost,
               targetPort: k8sPort,
               httpsAgent,
@@ -378,7 +386,7 @@ export const KubernetesProvider = ({
       return true;
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (axios.isAxiosError(error)) {
+      if (isAxiosError(error)) {
         if (error.response) {
           let { message } = error?.response?.data as unknown as { message?: string };
 
@@ -452,7 +460,7 @@ export const KubernetesProvider = ({
       }
 
       // 1. Create the service account
-      await axios.post(
+      await request.post(
         `${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts`,
         {
           metadata: {
@@ -488,7 +496,7 @@ export const KubernetesProvider = ({
         ...(providerInputs.roleType !== KubernetesRoleType.ClusterRole && { namespace })
       };
 
-      await axios.post(
+      await request.post(
         roleBindingUrl,
         {
           metadata: roleBindingMetadata,
@@ -523,7 +531,7 @@ export const KubernetesProvider = ({
       );
 
       // 3. Request a token for the service account
-      const res = await axios.post<TKubernetesTokenRequest>(
+      const res = await request.post<TKubernetesTokenRequest>(
         `${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${serviceAccountName}/token`,
         {
           spec: {
@@ -564,7 +572,7 @@ export const KubernetesProvider = ({
 
       const baseUrl = port ? `${host}:${port}` : host;
 
-      const res = await axios.post<TKubernetesTokenRequest>(
+      const res = await request.post<TKubernetesTokenRequest>(
         `${baseUrl}/api/v1/namespaces/${providerInputs.namespace}/serviceaccounts/${providerInputs.serviceAccountName}/token`,
         {
           spec: {
@@ -606,15 +614,16 @@ export const KubernetesProvider = ({
         providerInputs.ca && providerInputs.sslEnabled
           ? new https.Agent({
               ca: providerInputs.ca,
-              rejectUnauthorized: true
+              rejectUnauthorized: providerInputs.sslRejectUnauthorized
             })
           : undefined;
 
-      if (providerInputs.gatewayId) {
+      const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId(providerInputs);
+      if (effectiveGatewayId) {
         if (providerInputs.authMethod === KubernetesAuthMethod.Gateway) {
           tokenData = await $gatewayProxyWrapper(
             {
-              gatewayId: providerInputs.gatewayId,
+              gatewayId: effectiveGatewayId,
               targetHost: k8sHost,
               targetPort: k8sPort,
               httpsAgent,
@@ -627,7 +636,7 @@ export const KubernetesProvider = ({
         } else {
           tokenData = await $gatewayProxyWrapper(
             {
-              gatewayId: providerInputs.gatewayId,
+              gatewayId: effectiveGatewayId,
               targetHost: k8sGatewayHost,
               targetPort: k8sPort,
               httpsAgent,
@@ -651,7 +660,7 @@ export const KubernetesProvider = ({
       };
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (axios.isAxiosError(error)) {
+      if (isAxiosError(error)) {
         if (error.response) {
           let { message } = error?.response?.data as unknown as { message?: string };
 
@@ -695,7 +704,7 @@ export const KubernetesProvider = ({
       const namespace = config?.namespace ?? providerInputs.namespace.split(",")[0].trim();
 
       if (providerInputs.roleType === KubernetesRoleType.Role) {
-        await axios.delete(
+        await request.delete(
           `${baseUrl}/apis/rbac.authorization.k8s.io/v1/namespaces/${namespace}/rolebindings/${roleBindingName}`,
           {
             headers: {
@@ -714,7 +723,7 @@ export const KubernetesProvider = ({
           }
         );
       } else {
-        await axios.delete(`${baseUrl}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${roleBindingName}`, {
+        await request.delete(`${baseUrl}/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/${roleBindingName}`, {
           headers: {
             "Content-Type": "application/json",
             ...(providerInputs.authMethod === KubernetesAuthMethod.Gateway
@@ -732,7 +741,7 @@ export const KubernetesProvider = ({
       }
 
       // Delete the service account
-      await axios.delete(`${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${entityId}`, {
+      await request.delete(`${baseUrl}/api/v1/namespaces/${namespace}/serviceaccounts/${entityId}`, {
         headers: {
           "Content-Type": "application/json",
           ...(providerInputs.authMethod === KubernetesAuthMethod.Gateway
@@ -765,15 +774,16 @@ export const KubernetesProvider = ({
           providerInputs.ca && providerInputs.sslEnabled
             ? new https.Agent({
                 ca: providerInputs.ca,
-                rejectUnauthorized: true
+                rejectUnauthorized: providerInputs.sslRejectUnauthorized
               })
             : undefined;
 
-        if (providerInputs.gatewayId) {
+        const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId(providerInputs);
+        if (effectiveGatewayId) {
           if (providerInputs.authMethod === KubernetesAuthMethod.Gateway) {
             await $gatewayProxyWrapper(
               {
-                gatewayId: providerInputs.gatewayId,
+                gatewayId: effectiveGatewayId,
                 targetHost: k8sHost,
                 targetPort: k8sPort,
                 httpsAgent,
@@ -784,7 +794,7 @@ export const KubernetesProvider = ({
           } else {
             await $gatewayProxyWrapper(
               {
-                gatewayId: providerInputs.gatewayId,
+                gatewayId: effectiveGatewayId,
                 targetHost: k8sGatewayHost,
                 targetPort: k8sPort,
                 httpsAgent,
@@ -798,7 +808,7 @@ export const KubernetesProvider = ({
         }
       } catch (error) {
         let errorMessage = error instanceof Error ? error.message : "Unknown error";
-        if (axios.isAxiosError(error)) {
+        if (isAxiosError(error)) {
           if (error.response) {
             let { message } = error?.response?.data as unknown as { message?: string };
 

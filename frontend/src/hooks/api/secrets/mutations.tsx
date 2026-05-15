@@ -41,7 +41,7 @@ export const useCreateSecretV3 = ({
       tagIds,
       secretMetadata
     }) => {
-      const { data } = await apiRequest.post(`/api/v4/secrets/${secretKey}`, {
+      const { data } = await apiRequest.post(`/api/v4/secrets/${encodeURIComponent(secretKey)}`, {
         secretPath,
         type,
         environment,
@@ -80,6 +80,9 @@ export const useCreateSecretV3 = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -108,7 +111,7 @@ export const useUpdateSecretV3 = ({
       skipMultilineEncoding,
       secretMetadata
     }) => {
-      const { data } = await apiRequest.patch(`/api/v4/secrets/${secretKey}`, {
+      const { data } = await apiRequest.patch(`/api/v4/secrets/${encodeURIComponent(secretKey)}`, {
         projectId,
         environment,
         type,
@@ -139,6 +142,11 @@ export const useUpdateSecretV3 = ({
         queryKey: secretKeys.getProjectSecret({ projectId, environment, secretPath })
       });
       queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "secret-reference-tree" &&
+          (query.queryKey[1] as { projectId?: string })?.projectId === projectId
+      });
+      queryClient.invalidateQueries({
         queryKey: secretSnapshotKeys.list({ environment, projectId, directory: secretPath })
       });
       queryClient.invalidateQueries({
@@ -151,6 +159,9 @@ export const useUpdateSecretV3 = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -165,7 +176,7 @@ export const useDeleteSecretV3 = ({
 
   return useMutation<object, object, TDeleteSecretsV3DTO>({
     mutationFn: async ({ secretPath = "/", type, environment, projectId, secretKey, secretId }) => {
-      const { data } = await apiRequest.delete(`/api/v4/secrets/${secretKey}`, {
+      const { data } = await apiRequest.delete(`/api/v4/secrets/${encodeURIComponent(secretKey)}`, {
         data: {
           projectId,
           environment,
@@ -202,6 +213,9 @@ export const useDeleteSecretV3 = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -250,6 +264,9 @@ export const useCreateSecretBatch = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -286,6 +303,11 @@ export const useUpdateSecretBatch = ({
         queryKey: secretKeys.getProjectSecret({ projectId, environment, secretPath })
       });
       queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "secret-reference-tree" &&
+          (query.queryKey[1] as { projectId?: string })?.projectId === projectId
+      });
+      queryClient.invalidateQueries({
         queryKey: secretSnapshotKeys.list({ environment, projectId, directory: secretPath })
       });
       queryClient.invalidateQueries({
@@ -298,6 +320,9 @@ export const useUpdateSecretBatch = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -348,6 +373,9 @@ export const useDeleteSecretBatch = ({
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
@@ -394,13 +422,21 @@ export const useMoveSecrets = ({
 
       return data;
     },
-    onSuccess: (_, { projectId, sourceEnvironment, sourceSecretPath }) => {
+    onSuccess: (_, { projectId, sourceEnvironment, sourceSecretPath, destinationSecretPath }) => {
       queryClient.invalidateQueries({
         queryKey: dashboardKeys.getDashboardSecrets({
           projectId,
           secretPath: sourceSecretPath
         })
       });
+      if (destinationSecretPath !== sourceSecretPath) {
+        queryClient.invalidateQueries({
+          queryKey: dashboardKeys.getDashboardSecrets({
+            projectId,
+            secretPath: destinationSecretPath
+          })
+        });
+      }
       queryClient.invalidateQueries({
         queryKey: secretKeys.getProjectSecret({
           projectId,
@@ -439,13 +475,19 @@ export const useMoveSecrets = ({
       queryClient.invalidateQueries({
         queryKey: secretApprovalRequestKeys.count({ projectId })
       });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     },
     ...options
   });
 };
 
 export const createSecret = async (dto: TCreateSecretsV3DTO) => {
-  const { data } = await apiRequest.post(`/api/v4/secrets/${dto.secretKey}`, dto);
+  const { data } = await apiRequest.post(
+    `/api/v4/secrets/${encodeURIComponent(dto.secretKey)}`,
+    dto
+  );
   return data;
 };
 
@@ -548,6 +590,11 @@ export const useCreateCommit = () => {
         queryKey: secretKeys.getProjectSecret({ projectId, environment, secretPath })
       });
       queryClient.invalidateQueries({
+        predicate: (query) =>
+          query.queryKey[0] === "secret-reference-tree" &&
+          (query.queryKey[1] as { projectId?: string })?.projectId === projectId
+      });
+      queryClient.invalidateQueries({
         queryKey: secretSnapshotKeys.list({ environment, projectId, directory: secretPath })
       });
       queryClient.invalidateQueries({
@@ -560,6 +607,9 @@ export const useCreateCommit = () => {
         queryKey: commitKeys.history({ projectId, environment, directory: secretPath })
       });
       queryClient.invalidateQueries({ queryKey: secretApprovalRequestKeys.count({ projectId }) });
+      queryClient.invalidateQueries({
+        queryKey: secretApprovalRequestKeys.listAllForProject({ projectId })
+      });
     }
   });
 };

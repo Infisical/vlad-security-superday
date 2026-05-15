@@ -14,6 +14,8 @@ import { TPkiAcmeAccountDALFactory } from "@app/ee/services/pki-acme/pki-acme-ac
 import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/errors";
 import { logger } from "@app/lib/logger";
 import { ms } from "@app/lib/ms";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { TApprovalPolicyDALFactory } from "@app/services/approval-policy/approval-policy-dal";
 import { ApprovalPolicyType } from "@app/services/approval-policy/approval-policy-enums";
 import { APPROVAL_POLICY_FACTORY_MAP } from "@app/services/approval-policy/approval-policy-factory";
@@ -34,15 +36,13 @@ import {
   CertSignatureAlgorithm,
   CertStatus
 } from "@app/services/certificate/certificate-types";
+import { validateAcmIssuanceInputs } from "@app/services/certificate-authority/aws-acm-public-ca/aws-acm-public-ca-certificate-authority-fns";
 import {
   TCertificateAuthorityDALFactory,
   TCertificateAuthorityWithAssociatedCa
 } from "@app/services/certificate-authority/certificate-authority-dal";
 import { CaStatus, CaType } from "@app/services/certificate-authority/certificate-authority-enums";
-import {
-  createDistinguishedName,
-  parseDistinguishedName
-} from "@app/services/certificate-authority/certificate-authority-fns";
+import { createDistinguishedName, extractDnParts } from "@app/services/certificate-authority/certificate-authority-fns";
 import { TInternalCertificateAuthorityServiceFactory } from "@app/services/certificate-authority/internal/internal-certificate-authority-service";
 import { TCertificatePolicyServiceFactory } from "@app/services/certificate-policy/certificate-policy-service";
 import { TCertificateProfileDALFactory } from "@app/services/certificate-profile/certificate-profile-dal";
@@ -276,7 +276,13 @@ const validateRenewalEligibility = (
 
   const caType = (ca.externalCa?.type as CaType) ?? CaType.INTERNAL;
   const isInternalCa = caType === CaType.INTERNAL;
-  const isConnectedExternalCa = caType === CaType.ACME || caType === CaType.AZURE_AD_CS || caType === CaType.AWS_PCA;
+  const isConnectedExternalCa =
+    caType === CaType.ACME ||
+    caType === CaType.AZURE_AD_CS ||
+    caType === CaType.AWS_PCA ||
+    caType === CaType.AWS_ACM_PUBLIC_CA ||
+    caType === CaType.DIGICERT ||
+    caType === CaType.VENAFI_TPP;
   const isImportedCertificate = certificate.pkiSubscriberId != null && !certificate.profileId;
 
   if (!isInternalCa && !isConnectedExternalCa) {
@@ -665,7 +671,9 @@ export const certificateV3ServiceFactory = ({
         };
       }
     } else if (actor === ActorType.IDENTITY) {
-      const identity = await identityDAL.findById(actorId);
+      const identity = await requestMemoize(requestMemoKeys.identityFindById(actorId), () =>
+        identityDAL.findById(actorId)
+      );
       if (identity) {
         return {
           requesterName: identity.name || "Machine Identity",
@@ -1119,7 +1127,7 @@ export const certificateV3ServiceFactory = ({
         keyAlgorithm: effectiveKeyAlgorithm,
         isFromProfile: true,
         organization: certificateRequestWithDefaults.organization,
-        organizationalUnit: certificateRequestWithDefaults.organizationalUnit,
+        ou: certificateRequestWithDefaults.organizationalUnit,
         country: certificateRequestWithDefaults.country,
         state: certificateRequestWithDefaults.state,
         locality: certificateRequestWithDefaults.locality,
@@ -1497,7 +1505,7 @@ export const certificateV3ServiceFactory = ({
       flowDefaultTtl: ""
     });
 
-    const csrSubjectParsed = parseDistinguishedName(new x509.Pkcs10CertificateRequest(csr).subject);
+    const csrSubjectParsed = extractDnParts(new x509.Pkcs10CertificateRequest(csr).subjectName);
     const mergedSubject = {
       ...csrSubjectParsed,
       commonName: csrSubjectParsed.commonName ?? certificateRequest.commonName,
@@ -1709,6 +1717,28 @@ export const certificateV3ServiceFactory = ({
       });
     }
 
+    // ACM pre-flight validation runs before the approval branch so bad inputs (e.g., a TTL that
+    // isn't ACM's fixed 198 days) are rejected at submit time rather than after the approver has
+    // already approved a request that's guaranteed to fail downstream.
+    if (profile.caId) {
+      const preflightCa = await certificateAuthorityDAL.findByIdWithAssociatedCa(profile.caId);
+      if (preflightCa?.externalCa?.type === CaType.AWS_ACM_PUBLIC_CA) {
+        validateAcmIssuanceInputs({
+          csr: certificateOrder.csr,
+          keyAlgorithm: certificateOrder.keyAlgorithm,
+          altNames: certificateOrder.altNames,
+          ttl: certificateOrder.validity?.ttl,
+          notBefore: certificateOrder.notBefore,
+          notAfter: certificateOrder.notAfter,
+          organization: certificateRequest.organization,
+          organizationalUnit: certificateRequest.organizationalUnit,
+          country: certificateRequest.country,
+          state: certificateRequest.state,
+          locality: certificateRequest.locality
+        });
+      }
+    }
+
     const orderApprovalFactory = APPROVAL_POLICY_FACTORY_MAP[ApprovalPolicyType.CertRequest](
       ApprovalPolicyType.CertRequest
     );
@@ -1853,7 +1883,32 @@ export const certificateV3ServiceFactory = ({
       });
     }
 
-    if (caType === CaType.ACME || caType === CaType.AZURE_AD_CS || caType === CaType.AWS_PCA) {
+    if (
+      caType === CaType.ACME ||
+      caType === CaType.AZURE_AD_CS ||
+      caType === CaType.AWS_PCA ||
+      caType === CaType.DIGICERT ||
+      caType === CaType.AWS_ACM_PUBLIC_CA ||
+      caType === CaType.VENAFI_TPP
+    ) {
+      // Pre-flight validation for ACM — reject bad inputs synchronously so the user
+      // gets a 400 on submit rather than a FAILED request row after the job runs.
+      if (caType === CaType.AWS_ACM_PUBLIC_CA) {
+        validateAcmIssuanceInputs({
+          csr: certificateOrder.csr,
+          keyAlgorithm: certificateOrder.keyAlgorithm,
+          altNames: certificateOrder.altNames,
+          ttl: certificateOrder.validity?.ttl,
+          notBefore: certificateOrder.notBefore,
+          notAfter: certificateOrder.notAfter,
+          organization: certificateRequest.organization,
+          organizationalUnit: certificateRequest.organizationalUnit,
+          country: certificateRequest.country,
+          state: certificateRequest.state,
+          locality: certificateRequest.locality
+        });
+      }
+
       const orderId = randomUUID();
 
       const certRequest = await certificateRequestService.createCertificateRequest({
@@ -1895,6 +1950,7 @@ export const certificateV3ServiceFactory = ({
         certificateId: orderId,
         profileId: profile.id,
         caId: profile.caId || "",
+        caType,
         ttl: certificateOrder.validity?.ttl || "1y",
         signatureAlgorithm: certificateOrder.signatureAlgorithm || "",
         keyAlgorithm: certificateRequest.keyAlgorithm || "",
@@ -2086,6 +2142,11 @@ export const certificateV3ServiceFactory = ({
 
       const certificateRequest = {
         commonName: originalCert.commonName || undefined,
+        organization: originalCert.subjectOrganization || undefined,
+        organizationalUnit: originalCert.subjectOrganizationalUnit || undefined,
+        country: originalCert.subjectCountry || undefined,
+        state: originalCert.subjectState || undefined,
+        locality: originalCert.subjectLocality || undefined,
         keyUsages: parseKeyUsages(originalCert.keyUsages),
         extendedKeyUsages: parseExtendedKeyUsages(originalCert.extendedKeyUsages),
         subjectAlternativeNames: originalCert.altNames
@@ -2163,6 +2224,11 @@ export const certificateV3ServiceFactory = ({
             signatureAlgorithm: originalSignatureAlgorithm,
             keyAlgorithm: originalKeyAlgorithm,
             isFromProfile: true,
+            organization: originalCert.subjectOrganization || undefined,
+            ou: originalCert.subjectOrganizationalUnit || undefined,
+            country: originalCert.subjectCountry || undefined,
+            state: originalCert.subjectState || undefined,
+            locality: originalCert.subjectLocality || undefined,
             actor,
             actorId,
             actorAuthMethod,
@@ -2181,7 +2247,14 @@ export const certificateV3ServiceFactory = ({
             throw new NotFoundError({ message: "Certificate was signed but could not be found in database" });
           }
           newCert = foundCert;
-        } else if (caType === CaType.ACME || caType === CaType.AZURE_AD_CS || caType === CaType.AWS_PCA) {
+        } else if (
+          caType === CaType.ACME ||
+          caType === CaType.AZURE_AD_CS ||
+          caType === CaType.AWS_PCA ||
+          caType === CaType.DIGICERT ||
+          caType === CaType.AWS_ACM_PUBLIC_CA ||
+          caType === CaType.VENAFI_TPP
+        ) {
           // External CA renewal - mark for async processing outside transaction
           return {
             isExternalCA: true,
@@ -2290,7 +2363,12 @@ export const certificateV3ServiceFactory = ({
         status: CertificateRequestStatus.ISSUED,
         certificateId: newCert.id,
         ttl,
-        enrollmentType: EnrollmentType.API
+        enrollmentType: EnrollmentType.API,
+        organization: certificateRequest.organization,
+        organizationalUnit: certificateRequest.organizationalUnit,
+        country: certificateRequest.country,
+        state: certificateRequest.state,
+        locality: certificateRequest.locality
       });
 
       // Copy metadata from original cert to new cert and cert request
@@ -2344,7 +2422,12 @@ export const certificateV3ServiceFactory = ({
         metadata: `Renewed from certificate ID: ${originalCert.id}`,
         status: CertificateRequestStatus.PENDING,
         ttl,
-        enrollmentType: EnrollmentType.API
+        enrollmentType: EnrollmentType.API,
+        organization: originalCert.subjectOrganization || undefined,
+        organizationalUnit: originalCert.subjectOrganizationalUnit || undefined,
+        country: originalCert.subjectCountry || undefined,
+        state: originalCert.subjectState || undefined,
+        locality: originalCert.subjectLocality || undefined
       });
 
       certificateRequestId = certificateRequest.id;
@@ -2361,6 +2444,7 @@ export const certificateV3ServiceFactory = ({
         certificateId: renewalOrderId,
         profileId: profile?.id || "",
         caId: ca.id,
+        caType: (ca.externalCa?.type as CaType) ?? CaType.INTERNAL,
         commonName: originalCert.commonName || "",
         altNames: structuredAltNames,
         ttl,
@@ -2480,7 +2564,7 @@ export const certificateV3ServiceFactory = ({
 
     if (profile.enrollmentType !== EnrollmentType.API) {
       throw new ForbiddenRequestError({
-        message: "Certificate is not eligible for auto-renewal: EST certificates cannot be auto-renewed"
+        message: `Certificate is not eligible for auto-renewal: ${profile.enrollmentType.toUpperCase()} certificates cannot be auto-renewed`
       });
     }
 
@@ -2597,7 +2681,7 @@ export const certificateV3ServiceFactory = ({
 
     if (profile.enrollmentType !== EnrollmentType.API) {
       throw new ForbiddenRequestError({
-        message: "Certificate is not eligible for auto-renewal: EST certificates cannot be auto-renewed"
+        message: `Certificate is not eligible for auto-renewal: ${profile.enrollmentType.toUpperCase()} certificates cannot be auto-renewed`
       });
     }
 

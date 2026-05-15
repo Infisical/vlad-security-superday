@@ -135,16 +135,16 @@ export const pamResourceDALFactory = (db: TDbClient) => {
     return byResourceId;
   };
 
-  const findByAdServerResourceId = async (adServerResourceId: string, tx?: Knex) => {
+  const findByDomainId = async (domainId: string, tx?: Knex) => {
     try {
       const resources = await (tx || db.replicaNode())(TableName.PamResource)
         .select(selectAllTableCols(TableName.PamResource))
-        .where(`${TableName.PamResource}.adServerResourceId`, adServerResourceId)
+        .where(`${TableName.PamResource}.domainId`, domainId)
         .orderBy(`${TableName.PamResource}.name`, "asc");
 
       return resources;
     } catch (error) {
-      throw new DatabaseError({ error, name: "Find PAM resources by AD server resource ID" });
+      throw new DatabaseError({ error, name: "Find PAM resources by domain ID" });
     }
   };
 
@@ -172,13 +172,72 @@ export const pamResourceDALFactory = (db: TDbClient) => {
     return parseInt(String(result?.count || "0"), 10);
   };
 
+  const findByGatewayPoolId = async (gatewayPoolId: string, tx?: Knex) => {
+    const docs = await (tx || db.replicaNode())(TableName.PamResource)
+      .leftJoin(TableName.Project, `${TableName.PamResource}.projectId`, `${TableName.Project}.id`)
+      .where(`${TableName.PamResource}.gatewayPoolId`, gatewayPoolId)
+      .select(
+        db.ref("id").withSchema(TableName.PamResource),
+        db.ref("name").withSchema(TableName.PamResource),
+        db.ref("projectId").withSchema(TableName.PamResource),
+        db.ref("resourceType").withSchema(TableName.PamResource),
+        db.ref("name").withSchema(TableName.Project).as("projectName")
+      );
+
+    return docs;
+  };
+
+  const countByGatewayPoolId = async (gatewayPoolId: string, tx?: Knex) => {
+    const result = await (tx || db.replicaNode())(TableName.PamResource)
+      .where(`${TableName.PamResource}.gatewayPoolId`, gatewayPoolId)
+      .count("id")
+      .first();
+
+    return parseInt(String(result?.count || "0"), 10);
+  };
+
+  const countByProject = async (projectId: string, tx?: Knex): Promise<number> => {
+    const result = await (tx || db.replicaNode())(TableName.PamResource)
+      .where("projectId", projectId)
+      .count("id as count")
+      .first();
+    return Number((result as { count?: string | number })?.count ?? 0);
+  };
+
+  const countWithRotationByProject = async (projectId: string, tx?: Knex): Promise<number> => {
+    const result = await (tx || db.replicaNode())(TableName.PamResource)
+      .where("projectId", projectId)
+      .whereNotNull("encryptedRotationAccountCredentials")
+      .count("id as count")
+      .first();
+    return Number((result as { count?: string | number })?.count ?? 0);
+  };
+
+  const countByProjectGroupedByType = async (
+    projectId: string,
+    tx?: Knex
+  ): Promise<{ resourceType: string; count: number }[]> => {
+    const rows = (await (tx || db.replicaNode())(TableName.PamResource)
+      .select("resourceType")
+      .count("id as count")
+      .where("projectId", projectId)
+      .groupBy("resourceType")) as unknown as { resourceType: string; count: string | number }[];
+
+    return rows.map((row) => ({ resourceType: row.resourceType, count: Number(row.count) }));
+  };
+
   return {
     ...orm,
     findById,
     findByProjectId,
     findMetadataByResourceIds,
-    findByAdServerResourceId,
+    findByDomainId,
     findByGatewayId,
-    countByGatewayId
+    countByGatewayId,
+    findByGatewayPoolId,
+    countByGatewayPoolId,
+    countByProject,
+    countWithRotationByProject,
+    countByProjectGroupedByType
   };
 };

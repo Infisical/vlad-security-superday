@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import { PamAccountsSchema, PamResourcesSchema, ResourceMetadataSchema } from "@app/db/schemas";
+import { PamAccountsSchema, PamDomainsSchema, PamResourcesSchema, ResourceMetadataSchema } from "@app/db/schemas";
+import { PamDomainType } from "@app/ee/services/pam-domain/pam-domain-enums";
+import { PamResource } from "@app/ee/services/pam-resource/pam-resource-enums";
 import { slugSchema } from "@app/server/lib/schemas";
 import { ResourceMetadataNonEncryptionSchema } from "@app/services/resource-metadata/resource-metadata-schema";
 
@@ -36,6 +38,7 @@ export const SessionSummaryConfigSchema = z
 export const BasePamResourceSchema = PamResourcesSchema.omit({
   encryptedConnectionDetails: true,
   encryptedRotationAccountCredentials: true,
+  encryptedResourceMetadata: true,
   encryptedSessionSummaryConfig: true,
   resourceType: true
 }).extend({
@@ -49,8 +52,10 @@ const CoreCreatePamResourceSchema = z.object({
   metadata: ResourceMetadataNonEncryptionSchema.optional()
 });
 
+// No .superRefine — would turn into ZodEffects and break .extend() in per-type schemas.
 export const BaseCreateGatewayPamResourceSchema = CoreCreatePamResourceSchema.extend({
-  gatewayId: z.string().uuid()
+  gatewayId: z.string().uuid().optional(),
+  gatewayPoolId: z.string().uuid().optional()
 });
 
 export const BaseCreatePamResourceSchema = CoreCreatePamResourceSchema;
@@ -62,7 +67,8 @@ const CoreUpdatePamResourceSchema = z.object({
 });
 
 export const BaseUpdateGatewayPamResourceSchema = CoreUpdatePamResourceSchema.extend({
-  gatewayId: z.string().uuid().optional()
+  gatewayId: z.string().uuid().optional(),
+  gatewayPoolId: z.string().uuid().optional()
 });
 
 export const BaseUpdatePamResourceSchema = CoreUpdatePamResourceSchema;
@@ -75,16 +81,22 @@ export const BasePamAccountSchema = PamAccountsSchema.omit({
 });
 
 export const BasePamAccountSchemaWithResource = BasePamAccountSchema.extend({
+  parentType: z.union([z.nativeEnum(PamResource), z.nativeEnum(PamDomainType)]),
   resource: PamResourcesSchema.pick({
     id: true,
     name: true,
     resourceType: true
-  }).extend({
-    rotationCredentialsConfigured: z.boolean()
-  }),
+  })
+    .extend({
+      rotationCredentialsConfigured: z.boolean()
+    })
+    .nullable()
+    .optional(),
+  domain: PamDomainsSchema.pick({ id: true, name: true, domainType: true }).nullable().optional(),
   policyName: z.string().nullable().optional(),
   lastRotationMessage: z.string().nullable().optional(),
-  rotationStatus: z.string().nullable().optional()
+  rotationStatus: z.string().nullable().optional(),
+  requireReason: z.boolean().default(false)
 });
 
 export const BaseCreatePamAccountSchema = z.object({

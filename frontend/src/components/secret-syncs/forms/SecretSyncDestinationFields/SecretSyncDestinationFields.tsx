@@ -18,6 +18,7 @@ import { CircleCISyncFields } from "./CircleCISyncFields";
 import { CloudflarePagesSyncFields } from "./CloudflarePagesSyncFields";
 import { CloudflareWorkersSyncFields } from "./CloudflareWorkersSyncFields";
 import { DatabricksSyncFields } from "./DatabricksSyncFields";
+import { DevinSyncFields } from "./DevinSyncFields";
 import { DigitalOceanAppPlatformSyncFields } from "./DigitalOceanAppPlatformSyncFields";
 import { ExternalInfisicalSyncFields } from "./ExternalInfisicalSyncFields";
 import { FlyioSyncFields } from "./FlyioSyncFields";
@@ -32,11 +33,15 @@ import { NetlifySyncFields } from "./NetlifySyncFields";
 import { NorthflankSyncFields } from "./NorthflankSyncFields";
 import { OCIVaultSyncFields } from "./OCIVaultSyncFields";
 import { OctopusDeploySyncFields } from "./OctopusDeploySyncFields";
+import { OnaSyncFields } from "./OnaSyncFields";
+import { OvhSyncFields } from "./OvhSyncFields";
 import { RailwaySyncFields } from "./RailwaySyncFields";
 import { RenderSyncFields } from "./RenderSyncFields";
+import { SnowflakeSyncFields } from "./SnowflakeSyncFields";
 import { SupabaseSyncFields } from "./SupabaseSyncFields";
 import { TeamCitySyncFields } from "./TeamCitySyncFields";
 import { TerraformCloudSyncFields } from "./TerraformCloudSyncFields";
+import { TravisCISyncFields } from "./TravisCISyncFields";
 import { VercelSyncFields } from "./VercelSyncFields";
 import { WindmillSyncFields } from "./WindmillSyncFields";
 import { ZabbixSyncFields } from "./ZabbixSyncFields";
@@ -121,6 +126,16 @@ export const SecretSyncDestinationFields = () => {
       return <AzureEntraIdScimSyncFields />;
     case SecretSync.ExternalInfisical:
       return <ExternalInfisicalSyncFields />;
+    case SecretSync.OVH:
+      return <OvhSyncFields />;
+    case SecretSync.Devin:
+      return <DevinSyncFields />;
+    case SecretSync.Ona:
+      return <OnaSyncFields />;
+    case SecretSync.TravisCI:
+      return <TravisCISyncFields />;
+    case SecretSync.Snowflake:
+      return <SnowflakeSyncFields />;
     default:
       throw new Error(`Unhandled Destination Config Field: ${destination}`);
   }

@@ -112,6 +112,7 @@ import {
   TCloudflareWorkersSyncListItem,
   TCloudflareWorkersSyncWithCredentials
 } from "./cloudflare-workers";
+import { TDevinSync, TDevinSyncInput, TDevinSyncListItem, TDevinSyncWithCredentials } from "./devin/devin-sync-types";
 import {
   TDigitalOceanAppPlatformSyncInput,
   TDigitalOceanAppPlatformSyncListItem,
@@ -158,6 +159,8 @@ import {
   TOctopusDeploySyncListItem,
   TOctopusDeploySyncWithCredentials
 } from "./octopus-deploy";
+import { TOnaSync, TOnaSyncInput, TOnaSyncListItem, TOnaSyncWithCredentials } from "./ona";
+import { TOvhSync, TOvhSyncInput, TOvhSyncListItem, TOvhSyncWithCredentials } from "./ovh";
 import {
   TRailwaySync,
   TRailwaySyncInput,
@@ -170,6 +173,12 @@ import {
   TRenderSyncListItem,
   TRenderSyncWithCredentials
 } from "./render/render-sync-types";
+import {
+  TSnowflakeSync,
+  TSnowflakeSyncInput,
+  TSnowflakeSyncListItem,
+  TSnowflakeSyncWithCredentials
+} from "./snowflake";
 import {
   TSupabaseSync,
   TSupabaseSyncInput,
@@ -188,6 +197,7 @@ import {
   TTerraformCloudSyncListItem,
   TTerraformCloudSyncWithCredentials
 } from "./terraform-cloud";
+import { TTravisCISync, TTravisCISyncInput, TTravisCISyncListItem, TTravisCISyncWithCredentials } from "./travis-ci";
 import { TVercelSync, TVercelSyncInput, TVercelSyncListItem, TVercelSyncWithCredentials } from "./vercel";
 import { TZabbixSync, TZabbixSyncInput, TZabbixSyncListItem, TZabbixSyncWithCredentials } from "./zabbix";
 
@@ -227,7 +237,12 @@ export type TSecretSync =
   | TOctopusDeploySync
   | TCircleCISync
   | TAzureEntraIdScimSync
-  | TExternalInfisicalSync;
+  | TExternalInfisicalSync
+  | TOvhSync
+  | TDevinSync
+  | TOnaSync
+  | TTravisCISync
+  | TSnowflakeSync;
 
 export type TSecretSyncWithCredentials =
   | TAwsParameterStoreSyncWithCredentials
@@ -266,7 +281,12 @@ export type TSecretSyncWithCredentials =
   | TOctopusDeploySyncWithCredentials
   | TCircleCISyncWithCredentials
   | TAzureEntraIdScimSyncWithCredentials
-  | TExternalInfisicalSyncWithCredentials;
+  | TExternalInfisicalSyncWithCredentials
+  | TOvhSyncWithCredentials
+  | TDevinSyncWithCredentials
+  | TOnaSyncWithCredentials
+  | TTravisCISyncWithCredentials
+  | TSnowflakeSyncWithCredentials;
 
 export type TSecretSyncInput =
   | TAwsParameterStoreSyncInput
@@ -305,7 +325,12 @@ export type TSecretSyncInput =
   | TOctopusDeploySyncInput
   | TCircleCISyncInput
   | TAzureEntraIdScimSyncInput
-  | TExternalInfisicalSyncInput;
+  | TExternalInfisicalSyncInput
+  | TOvhSyncInput
+  | TDevinSyncInput
+  | TOnaSyncInput
+  | TTravisCISyncInput
+  | TSnowflakeSyncInput;
 
 export type TSecretSyncListItem =
   | TAwsParameterStoreSyncListItem
@@ -344,7 +369,12 @@ export type TSecretSyncListItem =
   | TOctopusDeploySyncListItem
   | TCircleCISyncListItem
   | TAzureEntraIdScimSyncListItem
-  | TExternalInfisicalSyncListItem;
+  | TExternalInfisicalSyncListItem
+  | TOvhSyncListItem
+  | TDevinSyncListItem
+  | TOnaSyncListItem
+  | TTravisCISyncListItem
+  | TSnowflakeSyncListItem;
 
 export type TSyncOptionsConfig = {
   canImportSecrets: boolean;

@@ -11,10 +11,6 @@ export const ROUTE_PATHS = Object.freeze({
       "/login/select-organization",
       "/_restrict-login-signup/login/select-organization"
     ),
-    ProviderSuccessPage: setRoute(
-      "/login/provider/success",
-      "/_restrict-login-signup/login/provider/success"
-    ),
     SignUpSsoPage: setRoute("/signup/sso", "/_restrict-login-signup/signup/sso"),
     AccountRecoveryResetPage: setRoute(
       "/account-recovery-reset",
@@ -74,8 +70,12 @@ export const ROUTE_PATHS = Object.freeze({
       )
     },
     NetworkingPage: setRoute(
-      "/organizations/$orgId/networking",
-      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/networking"
+      "/organizations/$orgId/networking/",
+      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/networking/"
+    ),
+    GatewayDetailsByIDPage: setRoute(
+      "/organizations/$orgId/networking/gateways/$gatewayId",
+      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/networking/gateways/$gatewayId"
     )
   },
   SecretManager: {
@@ -110,6 +110,10 @@ export const ROUTE_PATHS = Object.freeze({
     SettingsPage: setRoute(
       "/organizations/$orgId/projects/secret-management/$projectId/settings",
       "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/secret-management/$projectId/_secret-manager-layout/settings"
+    ),
+    InsightsPage: setRoute(
+      "/organizations/$orgId/projects/secret-management/$projectId/insights",
+      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/secret-management/$projectId/_secret-manager-layout/insights"
     ),
     IntegrationDetailsByIDPage: setRoute(
       "/organizations/$orgId/projects/secret-management/$projectId/integrations/$integrationId",
@@ -373,13 +377,17 @@ export const ROUTE_PATHS = Object.freeze({
       "/organizations/$orgId/projects/pam/$projectId/resources/",
       "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/pam/$projectId/_pam-layout/resources/"
     ),
+    SettingsPage: setRoute(
+      "/organizations/$orgId/projects/pam/$projectId/settings",
+      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/pam/$projectId/_pam-layout/settings"
+    ),
     SessionsPage: setRoute(
       "/organizations/$orgId/projects/pam/$projectId/sessions",
       "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/pam/$projectId/_pam-layout/sessions/"
     ),
     ApprovalRequestDetailPage: setRoute(
-      "/organizations/$orgId/projects/pam/$projectId/approval-requests/$approvalRequestId",
-      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/pam/$projectId/_pam-layout/approval-requests/$approvalRequestId"
+      "/organizations/$orgId/projects/pam/$projectId/approvals/$approvalRequestId",
+      "/_authenticate/_inject-org-details/_org-layout/organizations/$orgId/projects/pam/$projectId/_pam-layout/approvals/$approvalRequestId"
     ),
     PamSessionByIDPage: setRoute(
       "/organizations/$orgId/projects/pam/$projectId/sessions/$sessionId",

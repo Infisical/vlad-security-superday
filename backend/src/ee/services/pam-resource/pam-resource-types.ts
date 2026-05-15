@@ -9,12 +9,6 @@ import { ResourceMetadataNonEncryptionSchema } from "@app/services/resource-meta
 import { TGatewayV2ServiceFactory } from "../gateway-v2/gateway-v2-service";
 import { TPamAccountDependenciesDALFactory } from "../pam-discovery/pam-account-dependencies-dal";
 import {
-  TActiveDirectoryAccount,
-  TActiveDirectoryAccountCredentials,
-  TActiveDirectoryResource,
-  TActiveDirectoryResourceConnectionDetails
-} from "./active-directory/active-directory-resource-types";
-import {
   TAwsIamAccount,
   TAwsIamAccountCredentials,
   TAwsIamResource,
@@ -44,6 +38,12 @@ import {
   TMySQLResource,
   TMySQLResourceConnectionDetails
 } from "./mysql/mysql-resource-types";
+import {
+  TOracleAccount,
+  TOracleAccountCredentials,
+  TOracleResource,
+  TOracleResourceConnectionDetails
+} from "./oracle/oracle-resource-types";
 import { TPamResourceDALFactory } from "./pam-resource-dal";
 import { PamResource, PamResourceOrderBy } from "./pam-resource-enums";
 import {
@@ -84,7 +84,7 @@ export type TPamResource =
   | TRedisResource
   | TMongoDBResource
   | TWindowsResource
-  | TActiveDirectoryResource;
+  | TOracleResource;
 export type TPamResourceWithFavorite = TPamResources & { isFavorite: boolean };
 export type TPamResourceConnectionDetails =
   | TPostgresResourceConnectionDetails
@@ -96,7 +96,7 @@ export type TPamResourceConnectionDetails =
   | TRedisResourceConnectionDetails
   | TMongoDBResourceConnectionDetails
   | TWindowsResourceConnectionDetails
-  | TActiveDirectoryResourceConnectionDetails;
+  | TOracleResourceConnectionDetails;
 export type TPamResourceInternalMetadata = TSSHResourceInternalMetadata | TWindowsResourceInternalMetadata;
 
 // Account types
@@ -110,7 +110,7 @@ export type TPamAccount =
   | TRedisAccount
   | TMongoDBAccount
   | TWindowsAccount
-  | TActiveDirectoryAccount;
+  | TOracleAccount;
 
 export type TPamAccountCredentials =
   | TPostgresAccountCredentials
@@ -122,13 +122,14 @@ export type TPamAccountCredentials =
   | TRedisAccountCredentials
   | TMongoDBAccountCredentials
   | TWindowsAccountCredentials
-  | TActiveDirectoryAccountCredentials;
+  | TOracleAccountCredentials;
 
 // Resource DTOs
 export type TCreateResourceDTO = Pick<TPamResource, "name" | "connectionDetails" | "resourceType" | "projectId"> & {
   gatewayId?: string | null;
+  gatewayPoolId?: string | null;
   rotationAccountCredentials?: TPamAccountCredentials | null;
-  adServerResourceId?: string | null;
+  domainId?: string | null;
   metadata?: z.input<typeof ResourceMetadataNonEncryptionSchema>;
 };
 

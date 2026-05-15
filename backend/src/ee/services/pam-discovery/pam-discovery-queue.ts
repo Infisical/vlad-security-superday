@@ -1,10 +1,13 @@
+import { TGatewayPoolServiceFactory } from "@app/ee/services/gateway-pool/gateway-pool-service";
 import { TGatewayV2DALFactory } from "@app/ee/services/gateway-v2/gateway-v2-dal";
 import { TGatewayV2ServiceFactory } from "@app/ee/services/gateway-v2/gateway-v2-service";
+import { CronJobName, TCronJobFactory } from "@app/lib/cron/cron-job";
 import { logger } from "@app/lib/logger";
-import { JOB_SCHEDULER_PREFIX, QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue/queue-service";
+import { QueueJobs, QueueName, TQueueServiceFactory } from "@app/queue/queue-service";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 
 import { TPamAccountDALFactory } from "../pam-account/pam-account-dal";
+import { TPamDomainDALFactory } from "../pam-domain/pam-domain-dal";
 import { TPamResourceDALFactory } from "../pam-resource/pam-resource-dal";
 import { TPamAccountDependenciesDALFactory } from "./pam-account-dependencies-dal";
 import { PamDiscoverySourceRunTrigger, PamDiscoveryType } from "./pam-discovery-enums";
@@ -27,12 +30,15 @@ type TPamDiscoveryQueueFactoryDep = {
     "upsertJunction" | "markStaleForRun"
   >;
   pamAccountDependenciesDAL: Pick<TPamAccountDependenciesDALFactory, "upsertDependency">;
+  pamDomainDAL: Pick<TPamDomainDALFactory, "create" | "find" | "transaction">;
   pamResourceDAL: Pick<TPamResourceDALFactory, "create" | "find" | "findById" | "updateById" | "transaction">;
   pamAccountDAL: Pick<TPamAccountDALFactory, "create" | "find" | "updateById" | "transaction">;
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">;
   queueService: TQueueServiceFactory;
+  cronJob: TCronJobFactory;
   gatewayV2Service: Pick<TGatewayV2ServiceFactory, "getPlatformConnectionDetailsByGatewayId">;
   gatewayV2DAL: Pick<TGatewayV2DALFactory, "findById">;
+  gatewayPoolService: Pick<TGatewayPoolServiceFactory, "resolveEffectiveGatewayId">;
 };
 
 export type TPamDiscoveryQueueFactory = ReturnType<typeof pamDiscoveryQueueFactory>;
@@ -44,12 +50,15 @@ export const pamDiscoveryQueueFactory = ({
   pamDiscoverySourceAccountsDAL,
   pamDiscoverySourceDependenciesDAL,
   pamAccountDependenciesDAL,
+  pamDomainDAL,
   pamResourceDAL,
   pamAccountDAL,
   kmsService,
   queueService,
+  cronJob,
   gatewayV2Service,
-  gatewayV2DAL
+  gatewayV2DAL,
+  gatewayPoolService
 }: TPamDiscoveryQueueFactoryDep) => {
   const startPamDiscoveryQueue = () => {
     queueService.start(QueueName.PamDiscoveryScan, async (job) => {
@@ -76,13 +85,26 @@ export const pamDiscoveryQueueFactory = ({
 
           const configuration = discoverySource.discoveryConfiguration as TPamDiscoveryConfiguration;
 
+          const effectiveGatewayId = await gatewayPoolService.resolveEffectiveGatewayId({
+            gatewayId: discoverySource.gatewayId,
+            gatewayPoolId: discoverySource.gatewayPoolId
+          });
+          if (!effectiveGatewayId) {
+            logger.error(
+              { discoverySourceId, triggeredBy },
+              "PAM Discovery Source has no gateway or gateway pool, skipping scan"
+            );
+            return;
+          }
+
           const factory = PAM_DISCOVERY_FACTORY_MAP[discoveryType](
             discoveryType,
             configuration,
             credentials,
-            discoverySource.gatewayId,
+            effectiveGatewayId,
             discoverySource.projectId,
-            gatewayV2Service
+            gatewayV2Service,
+            discoverySource.gatewayPoolId
           );
 
           const scanDeps = {
@@ -92,6 +114,7 @@ export const pamDiscoveryQueueFactory = ({
             pamDiscoverySourceAccountsDAL,
             pamDiscoverySourceDependenciesDAL,
             pamAccountDependenciesDAL,
+            pamDomainDAL,
             pamResourceDAL,
             pamAccountDAL,
             kmsService,
@@ -119,14 +142,16 @@ export const pamDiscoveryQueueFactory = ({
     });
 
     // runs every day at 3:00 AM
-    void queueService
-      .upsertJobScheduler(
-        QueueName.PamDiscoveryScan,
-        `${JOB_SCHEDULER_PREFIX}:pam-discovery-scheduled-scan`,
-        { pattern: "0 3 * * *" },
-        { name: QueueJobs.PamDiscoveryScheduledScan }
-      )
-      .catch((err) => logger.error(err, "Failed to schedule PAM Discovery cron"));
+    cronJob.register({
+      name: CronJobName.PamDiscoveryScheduledScan,
+      pattern: "0 3 * * *",
+      runHashTtlS: 3 * 24 * 60 * 60,
+      handler: async () => {
+        await queueService.queue(QueueName.PamDiscoveryScan, QueueJobs.PamDiscoveryScheduledScan, undefined as never, {
+          jobId: CronJobName.PamDiscoveryScheduledScan
+        });
+      }
+    });
   };
 
   const queuePamDiscoveryScan = async (discoverySourceId: string) => {

@@ -20,9 +20,13 @@ import { registerChecklyConnectionRouter } from "./checkly-connection-router";
 import { registerCircleCIConnectionRouter } from "./circleci-connection-router";
 import { registerCloudflareConnectionRouter } from "./cloudflare-connection-router";
 import { registerDatabricksConnectionRouter } from "./databricks-connection-router";
+import { registerDatadogConnectionRouter } from "./datadog-connection-router";
 import { registerDbtConnectionRouter } from "./dbt-connection-router";
+import { registerDevinConnectionRouter } from "./devin-connection-router";
+import { registerDigiCertConnectionRouter } from "./digicert-connection-router";
 import { registerDigitalOceanConnectionRouter } from "./digital-ocean-connection-router";
 import { registerDNSMadeEasyConnectionRouter } from "./dns-made-easy-connection-router";
+import { registerDopplerConnectionRouter } from "./doppler-connection-router";
 import { registerExternalInfisicalConnectionRouter } from "./external-infisical-connection-router";
 import { registerFlyioConnectionRouter } from "./flyio-connection-router";
 import { registerGcpConnectionRouter } from "./gcp-connection-router";
@@ -42,17 +46,22 @@ import { registerNetScalerConnectionRouter } from "./netscaler-connection-router
 import { registerNorthflankConnectionRouter } from "./northflank-connection-router";
 import { registerOctopusDeployConnectionRouter } from "./octopus-deploy-connection-router";
 import { registerOktaConnectionRouter } from "./okta-connection-router";
+import { registerOnaConnectionRouter } from "./ona-connection-router";
 import { registerOpenRouterConnectionRouter } from "./open-router-connection-router";
+import { registerOvhConnectionRouter } from "./ovh-connection-router";
 import { registerPostgresConnectionRouter } from "./postgres-connection-router";
 import { registerRailwayConnectionRouter } from "./railway-connection-router";
 import { registerRedisConnectionRouter } from "./redis-connection-router";
 import { registerRenderConnectionRouter } from "./render-connection-router";
 import { registerSmbConnectionRouter } from "./smb-connection-router";
+import { registerSnowflakeConnectionRouter } from "./snowflake-connection-router";
 import { registerSshConnectionRouter } from "./ssh-connection-router";
 import { registerSupabaseConnectionRouter } from "./supabase-connection-router";
 import { registerTeamCityConnectionRouter } from "./teamcity-connection-router";
 import { registerTerraformCloudConnectionRouter } from "./terraform-cloud-router";
+import { registerTravisCIConnectionRouter } from "./travis-ci-connection-router";
 import { registerVenafiConnectionRouter } from "./venafi-connection-router";
+import { registerVenafiTppConnectionRouter } from "./venafi-tpp-connection-router";
 import { registerVercelConnectionRouter } from "./vercel-connection-router";
 import { registerWindmillConnectionRouter } from "./windmill-connection-router";
 import { registerZabbixConnectionRouter } from "./zabbix-connection-router";
@@ -114,7 +123,16 @@ export const APP_CONNECTION_REGISTER_ROUTER_MAP: Record<AppConnection, (server: 
     [AppConnection.CircleCI]: registerCircleCIConnectionRouter,
     [AppConnection.AzureEntraId]: registerAzureEntraIdConnectionRouter,
     [AppConnection.Venafi]: registerVenafiConnectionRouter,
+    [AppConnection.VenafiTpp]: registerVenafiTppConnectionRouter,
     [AppConnection.ExternalInfisical]: registerExternalInfisicalConnectionRouter,
+    [AppConnection.Doppler]: registerDopplerConnectionRouter,
     [AppConnection.NetScaler]: registerNetScalerConnectionRouter,
-    [AppConnection.Anthropic]: registerAnthropicConnectionRouter
+    [AppConnection.Anthropic]: registerAnthropicConnectionRouter,
+    [AppConnection.OVH]: registerOvhConnectionRouter,
+    [AppConnection.Devin]: registerDevinConnectionRouter,
+    [AppConnection.Ona]: registerOnaConnectionRouter,
+    [AppConnection.DigiCert]: registerDigiCertConnectionRouter,
+    [AppConnection.TravisCI]: registerTravisCIConnectionRouter,
+    [AppConnection.Snowflake]: registerSnowflakeConnectionRouter,
+    [AppConnection.Datadog]: registerDatadogConnectionRouter
   };

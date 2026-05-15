@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { subject } from "@casl/ability";
 import {
   AsteriskIcon,
+  Check,
   ChevronDownIcon,
   EditIcon,
   HandshakeIcon,
   InfoIcon,
+  LoaderCircleIcon,
   RefreshCwIcon,
   TrashIcon,
   XIcon
@@ -15,16 +18,17 @@ import { ProjectPermissionCan } from "@app/components/permissions";
 import { SecretRotationV2StatusBadge } from "@app/components/secret-rotations-v2/SecretRotationV2StatusBadge";
 import {
   Badge,
+  Checkbox,
+  IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
   Tooltip,
   TooltipContent,
-  TooltipTrigger,
-  UnstableIconButton,
-  UnstableTable,
-  UnstableTableBody,
-  UnstableTableCell,
-  UnstableTableHead,
-  UnstableTableHeader,
-  UnstableTableRow
+  TooltipTrigger
 } from "@app/components/v3";
 import {
   ProjectPermissionSecretRotationActions,
@@ -50,11 +54,14 @@ type Props = {
   getSecretRotationByName: (slug: string, name: string) => TSecretRotationV2 | undefined;
   getSecretRotationStatusesByName: (name: string) => (SecretRotationStatus | null)[] | undefined;
   tableWidth: number;
+  isSelected: boolean;
+  onToggleRotationSelect: (name: string) => void;
   onEdit: (secretRotation: TSecretRotationV2) => void;
   onRotate: (secretRotation: TSecretRotationV2) => void;
   onReconcile: (secretRotation: TSecretRotationV2) => void;
   onViewGeneratedCredentials: (secretRotation: TSecretRotationV2) => void;
   onDelete: (secretRotation: TSecretRotationV2) => void;
+  onCheckActiveCredentials: (secretRotation: TSecretRotationV2) => Promise<void> | void;
 };
 
 const shouldShowReconciliationButton = (secretRotation: TSecretRotationV2) =>
@@ -73,13 +80,27 @@ export const SecretRotationTableRow = ({
   tableWidth,
   getSecretRotationByName,
   getSecretRotationStatusesByName,
+  isSelected,
+  onToggleRotationSelect,
   onEdit,
   onRotate,
   onViewGeneratedCredentials,
   onDelete,
-  onReconcile
+  onReconcile,
+  onCheckActiveCredentials
 }: Props) => {
   const [isExpanded, setIsExpanded] = useToggle(false);
+  const [checkingRotationId, setCheckingRotationId] = useState<string | null>(null);
+
+  const handleCheckActiveCredentials = async (secretRotation: TSecretRotationV2) => {
+    if (checkingRotationId) return;
+    setCheckingRotationId(secretRotation.id);
+    try {
+      await onCheckActiveCredentials(secretRotation);
+    } finally {
+      setCheckingRotationId(null);
+    }
+  };
 
   const isSingleEnvView = environments.length === 1;
   const totalCols = environments.length + 2; // secret key row + icon
@@ -115,10 +136,43 @@ export const SecretRotationTableRow = ({
             })
           })}
         >
+          {(isAllowed) => {
+            const isCheckingRotation = checkingRotationId === secretRotation.id;
+            return (
+              <Tooltip>
+                <TooltipTrigger>
+                  <IconButton
+                    variant="ghost"
+                    size="xs"
+                    className={twMerge(
+                      "w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7",
+                      isCheckingRotation && "w-7"
+                    )}
+                    isDisabled={!isAllowed || Boolean(checkingRotationId)}
+                    onClick={() => handleCheckActiveCredentials(secretRotation)}
+                  >
+                    {isCheckingRotation ? <LoaderCircleIcon className="animate-spin" /> : <Check />}
+                  </IconButton>
+                </TooltipTrigger>
+                <TooltipContent>Validate Credentials</TooltipContent>
+              </Tooltip>
+            );
+          }}
+        </ProjectPermissionCan>
+        <ProjectPermissionCan
+          I={ProjectPermissionSecretRotationActions.ReadGeneratedCredentials}
+          a={subject(ProjectPermissionSub.SecretRotation, {
+            environment: environment.slug,
+            secretPath: folder.path,
+            ...(secretRotation.connectionId && {
+              connectionId: secretRotation.connectionId
+            })
+          })}
+        >
           {(isAllowed) => (
             <Tooltip>
               <TooltipTrigger>
-                <UnstableIconButton
+                <IconButton
                   variant="ghost"
                   size="xs"
                   className="w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7"
@@ -126,7 +180,7 @@ export const SecretRotationTableRow = ({
                   onClick={() => onViewGeneratedCredentials(secretRotation)}
                 >
                   <AsteriskIcon />
-                </UnstableIconButton>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>View Generated Credentials</TooltipContent>
             </Tooltip>
@@ -145,7 +199,7 @@ export const SecretRotationTableRow = ({
           {(isAllowed) => (
             <Tooltip>
               <TooltipTrigger>
-                <UnstableIconButton
+                <IconButton
                   variant="ghost"
                   size="xs"
                   className="w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7"
@@ -153,7 +207,7 @@ export const SecretRotationTableRow = ({
                   onClick={() => onRotate(secretRotation)}
                 >
                   <RefreshCwIcon />
-                </UnstableIconButton>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Rotate Secret</TooltipContent>
             </Tooltip>
@@ -173,7 +227,7 @@ export const SecretRotationTableRow = ({
             {(isAllowed) => (
               <Tooltip>
                 <TooltipTrigger>
-                  <UnstableIconButton
+                  <IconButton
                     variant="ghost"
                     size="xs"
                     className="w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7"
@@ -181,7 +235,7 @@ export const SecretRotationTableRow = ({
                     onClick={() => onReconcile(secretRotation)}
                   >
                     <HandshakeIcon />
-                  </UnstableIconButton>
+                  </IconButton>
                 </TooltipTrigger>
                 <TooltipContent>Reconcile Secret</TooltipContent>
               </Tooltip>
@@ -203,7 +257,7 @@ export const SecretRotationTableRow = ({
           {(isAllowed) => (
             <Tooltip>
               <TooltipTrigger>
-                <UnstableIconButton
+                <IconButton
                   variant="ghost"
                   size="xs"
                   className="w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7"
@@ -211,7 +265,7 @@ export const SecretRotationTableRow = ({
                   onClick={() => onEdit(secretRotation)}
                 >
                   <EditIcon />
-                </UnstableIconButton>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Edit</TooltipContent>
             </Tooltip>
@@ -230,7 +284,7 @@ export const SecretRotationTableRow = ({
           {(isAllowed) => (
             <Tooltip>
               <TooltipTrigger>
-                <UnstableIconButton
+                <IconButton
                   variant="ghost"
                   size="xs"
                   className="w-0 overflow-hidden border-0 transition-all duration-300 group-hover:w-7 hover:text-danger"
@@ -238,7 +292,7 @@ export const SecretRotationTableRow = ({
                   isDisabled={!isAllowed}
                 >
                   <TrashIcon />
-                </UnstableIconButton>
+                </IconButton>
               </TooltipTrigger>
               <TooltipContent>Delete</TooltipContent>
             </Tooltip>
@@ -250,24 +304,44 @@ export const SecretRotationTableRow = ({
 
   return (
     <>
-      <UnstableTableRow
+      <TableRow
         onClick={isSingleEnvView ? undefined : setIsExpanded.toggle}
         className="group hover:z-10"
       >
-        <UnstableTableCell
+        <TableCell
           className={twMerge(
             !isSingleEnvView && "sticky left-0 z-10",
             "bg-container transition-colors duration-75 group-hover:bg-container-hover",
             !isSingleEnvView && isExpanded && "border-b-0 bg-container-hover"
           )}
         >
+          <Checkbox
+            variant="project"
+            id={`checkbox-${secretRotationName}`}
+            isChecked={isSelected}
+            onCheckedChange={() => {
+              onToggleRotationSelect(secretRotationName);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+            }}
+            className={twMerge("hidden group-hover:flex", isSelected && "flex")}
+          />
           {!isSingleEnvView && isExpanded ? (
-            <ChevronDownIcon />
+            <ChevronDownIcon
+              className={twMerge("block", "group-hover:!hidden", isSelected && "!hidden")}
+            />
           ) : (
-            <RefreshCwIcon className="text-secret-rotation" />
+            <RefreshCwIcon
+              className={twMerge(
+                "block text-secret-rotation",
+                "group-hover:!hidden",
+                isSelected && "!hidden"
+              )}
+            />
           )}
-        </UnstableTableCell>
-        <UnstableTableCell
+        </TableCell>
+        <TableCell
           className={twMerge(
             !isSingleEnvView && "sticky left-10 z-10 border-r",
             "bg-container transition-colors duration-75 group-hover:bg-container-hover",
@@ -301,8 +375,8 @@ export const SecretRotationTableRow = ({
                     className={twMerge(
                       "ml-auto flex items-center transition-[margin] duration-300",
                       shouldShowReconciliationButton(singleEnvRotation)
-                        ? "group-hover:mr-40"
-                        : "group-hover:mr-32"
+                        ? "group-hover:mr-48"
+                        : "group-hover:mr-40"
                     )}
                   >
                     <SecretRotationV2StatusBadge secretRotation={singleEnvRotation} />
@@ -329,10 +403,10 @@ export const SecretRotationTableRow = ({
               )}
             </>
           )}
-        </UnstableTableCell>
+        </TableCell>
         {environments.length > 1 &&
           environments.map(({ slug }, i) => {
-            if (isExpanded) return <UnstableTableCell className="border-b-0 bg-container-hover" />;
+            if (isExpanded) return <TableCell className="border-b-0 bg-container-hover" />;
 
             const isPresent = isSecretRotationInEnv(secretRotationName, slug);
 
@@ -343,22 +417,22 @@ export const SecretRotationTableRow = ({
               />
             );
           })}
-      </UnstableTableRow>
+      </TableRow>
       {!isSingleEnvView && isExpanded && (
-        <UnstableTableRow>
-          <UnstableTableCell colSpan={totalCols} className={`${isExpanded && "bg-card p-0"}`}>
+        <TableRow>
+          <TableCell colSpan={totalCols} className={`${isExpanded && "bg-card p-0"}`}>
             <div
               style={{ minWidth: tableWidth, maxWidth: tableWidth }}
               className="sticky left-0 flex flex-col gap-y-4 border-t-2 border-b-1 border-l-1 border-border border-x-project/50 bg-card p-4"
             >
-              <UnstableTable containerClassName="border-none rounded-none bg-transparent">
-                <UnstableTableHeader>
-                  <UnstableTableRow>
-                    <UnstableTableHead className="w-full">Environment</UnstableTableHead>
-                    <UnstableTableHead />
-                  </UnstableTableRow>
-                </UnstableTableHeader>
-                <UnstableTableBody>
+              <Table containerClassName="border-none rounded-none bg-transparent">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-full">Environment</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {environments
                     .filter((env) => {
                       const secretRotation = getSecretRotationByName(env.slug, secretRotationName);
@@ -374,8 +448,8 @@ export const SecretRotationTableRow = ({
                       const showReconcileButton = shouldShowReconciliationButton(secretRotation);
 
                       return (
-                        <UnstableTableRow key={slug} className="group relative hover:z-10">
-                          <UnstableTableCell colSpan={2}>
+                        <TableRow key={slug} className="group relative hover:z-10">
+                          <TableCell colSpan={2}>
                             <div className="relative flex w-full flex-wrap items-center">
                               <span>{envName}</span>
                               <Badge variant="neutral" className="mx-2.5">
@@ -399,7 +473,7 @@ export const SecretRotationTableRow = ({
                               <div
                                 className={twMerge(
                                   "ml-auto flex items-center transition-[margin] duration-300",
-                                  showReconcileButton ? "group-hover:mr-40" : "group-hover:mr-32"
+                                  showReconcileButton ? "group-hover:mr-48" : "group-hover:mr-40"
                                 )}
                               >
                                 <SecretRotationV2StatusBadge secretRotation={secretRotation} />
@@ -408,15 +482,15 @@ export const SecretRotationTableRow = ({
                                 {renderActionButtons(secretRotation)}
                               </div>
                             </div>
-                          </UnstableTableCell>
-                        </UnstableTableRow>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                </UnstableTableBody>
-              </UnstableTable>
+                </TableBody>
+              </Table>
             </div>
-          </UnstableTableCell>
-        </UnstableTableRow>
+          </TableCell>
+        </TableRow>
       )}
     </>
   );

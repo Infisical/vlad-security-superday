@@ -2,7 +2,6 @@
 export enum PamResourceType {
   Postgres = "postgres",
   MySQL = "mysql",
-  RDP = "rdp",
   SSH = "ssh",
   Kubernetes = "kubernetes",
   OracleDB = "oracledb",
@@ -18,8 +17,7 @@ export enum PamResourceType {
   Snowflake = "snowflake",
   DynamoDB = "dynamodb",
   AwsIam = "aws-iam",
-  Windows = "windows",
-  ActiveDirectory = "active-directory"
+  Windows = "windows"
 }
 
 export enum PamResourceOrderBy {
@@ -34,7 +32,7 @@ export enum PamSessionStatus {
   Terminated = "terminated"
 }
 
-export enum TerminalChannelType {
+export enum SessionChannelType {
   Terminal = "terminal",
   Exec = "exec",
   Sftp = "sftp"

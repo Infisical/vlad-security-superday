@@ -8,12 +8,13 @@ import {
 } from "@app/db/schemas";
 import { slugSchema } from "@app/server/lib/schemas";
 
-import { ActiveDirectoryAccountMetadataSchema } from "../pam-resource/active-directory/active-directory-resource-schemas";
+import { ActiveDirectoryAccountMetadataSchema } from "../pam-domain/active-directory/active-directory-domain-schemas";
+import { PamDomainType } from "../pam-domain/pam-domain-enums";
 import { PamResource } from "../pam-resource/pam-resource-enums";
-import { SSHResourceInternalMetadataSchema } from "../pam-resource/ssh/ssh-resource-schemas";
+import { SanitizedSSHResourceInternalMetadataSchema } from "../pam-resource/ssh/ssh-resource-schemas";
 import {
-  WindowsAccountMetadataSchema,
-  WindowsResourceInternalMetadataSchema
+  SanitizedWindowsResourceInternalMetadataSchema,
+  WindowsAccountMetadataSchema
 } from "../pam-resource/windows-server/windows-server-resource-schemas";
 import {
   PamDiscoverySchedule,
@@ -32,16 +33,19 @@ export const BasePamDiscoverySourceSchema = PamDiscoverySourcesSchema.omit({
   status: z.nativeEnum(PamDiscoverySourceStatus)
 });
 
+// No .superRefine — would turn into ZodEffects and break .extend() in per-type schemas.
 export const BaseCreatePamDiscoverySourceSchema = z.object({
   projectId: z.string().uuid(),
   name: slugSchema({ field: "name" }),
-  gatewayId: z.string().uuid(),
+  gatewayId: z.string().uuid().optional(),
+  gatewayPoolId: z.string().uuid().optional(),
   schedule: z.nativeEnum(PamDiscoverySchedule)
 });
 
 export const BaseUpdatePamDiscoverySourceSchema = z.object({
   name: slugSchema({ field: "name" }).optional(),
   gatewayId: z.string().uuid().optional(),
+  gatewayPoolId: z.string().uuid().optional(),
   schedule: z.nativeEnum(PamDiscoverySchedule).optional()
 });
 
@@ -57,15 +61,18 @@ export const DiscoveredResourceSchema = PamDiscoverySourceResourcesSchema.extend
   resourceName: z.string(),
   resourceType: z.nativeEnum(PamResource),
   resourceInternalMetadata: z
-    .union([SSHResourceInternalMetadataSchema, WindowsResourceInternalMetadataSchema])
+    .union([SanitizedSSHResourceInternalMetadataSchema, SanitizedWindowsResourceInternalMetadataSchema])
     .optional(),
   dependencyCount: z.number().default(0)
 });
 
 export const DiscoveredAccountSchema = PamDiscoverySourceAccountsSchema.extend({
-  resourceType: z.nativeEnum(PamResource),
-  resourceName: z.string(),
-  resourceId: z.string().uuid(),
+  resourceType: z.nativeEnum(PamResource).nullable().optional(),
+  resourceName: z.string().nullable().optional(),
+  resourceId: z.string().uuid().nullable().optional(),
+  domainType: z.nativeEnum(PamDomainType).nullable().optional(),
+  domainName: z.string().nullable().optional(),
+  domainId: z.string().uuid().nullable().optional(),
   accountName: z.string(),
   internalMetadata: z.union([ActiveDirectoryAccountMetadataSchema, WindowsAccountMetadataSchema]),
   dependencyCount: z.number().default(0)

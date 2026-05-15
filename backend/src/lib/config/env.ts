@@ -10,6 +10,7 @@ import { TSuperAdminDALFactory } from "@app/services/super-admin/super-admin-dal
 import { BadRequestError } from "../errors";
 import { removeTrailingSlash } from "../fn";
 import { CustomLogger } from "../logger/logger";
+import { ms } from "../ms";
 import { zpStr } from "../zod";
 
 export const GITLAB_URL = "https://gitlab.com";
@@ -142,6 +143,9 @@ const envSchema = z
     GENERATE_SANITIZED_SCHEMA: zodStrBool
       .default("false")
       .describe("Generate sanitized schema with views after migrations"),
+    FAIL_ON_SANITIZED_SCHEMA_ERROR: zodStrBool
+      .default("false")
+      .describe("Exit startup when sanitized schema generation fails"),
     SANITIZED_SCHEMA_ROLE: zpStr(
       z.string().describe("PostgreSQL role to grant read access to the sanitized schema").optional()
     ),
@@ -199,6 +203,14 @@ const envSchema = z
     SMTP_PASSWORD: zpStr(z.string().optional()),
     SMTP_FROM_ADDRESS: zpStr(z.string().optional()),
     SMTP_FROM_NAME: zpStr(z.string().optional().default("Infisical")),
+    SMTP_HELO_HOST: zpStr(
+      z
+        .string()
+        .optional()
+        .describe(
+          "Hostname announced in the SMTP EHLO/HELO greeting. Defaults to the OS hostname, which may not be a valid FQDN inside containers."
+        )
+    ),
     SMTP_CUSTOM_CA_CERT: zpStr(
       z.string().optional().describe("Base64 encoded custom CA certificate PEM(s) for the SMTP server")
     ),
@@ -217,6 +229,12 @@ const envSchema = z
     // HubSpot Forms API for capturing signups
     HUBSPOT_PORTAL_ID: zpStr(z.string().optional()),
     HUBSPOT_SIGNUP_FORM_ID: zpStr(z.string().optional()),
+    // In-app announcements (Contentful). Public read-only delivery token; safe to bake in defaults.
+    // Self-hosted admins can disable outbound calls with ANNOUNCEMENTS_ENABLED=false.
+    ANNOUNCEMENTS_ENABLED: zodStrBool.default("true"),
+    CONTENTFUL_SPACE_ID: zpStr(z.string().optional()),
+    CONTENTFUL_DELIVERY_TOKEN: zpStr(z.string().optional()),
+    CONTENTFUL_ENVIRONMENT: zpStr(z.string().optional().default("master")),
     // GitHub API token for upgrade path tool
     GITHUB_API_TOKEN: zpStr(z.string().optional()),
     // jwt options
@@ -227,6 +245,15 @@ const envSchema = z
     JWT_INVITE_LIFETIME: zpStr(z.string().default("1d")),
     JWT_MFA_LIFETIME: zpStr(z.string().default("5m")),
     JWT_PROVIDER_AUTH_LIFETIME: zpStr(z.string().default("15m")),
+    MAX_MACHINE_IDENTITY_TOKEN_AGE: zpStr(
+      z
+        .string()
+        .default("90d")
+        .transform((val) => Math.floor(ms(val) / 1000))
+    ),
+    LEGACY_IDENTITY_ACCESS_TOKEN_EXPIRATION_ENFORCED_AT: zpStr(
+      z.coerce.date().default(new Date("2026-05-04T00:00:00.000Z"))
+    ),
     // Oauth
     CLIENT_ID_GOOGLE_LOGIN: zpStr(z.string().optional()),
     CLIENT_SECRET_GOOGLE_LOGIN: zpStr(z.string().optional()),
@@ -297,6 +324,7 @@ const envSchema = z
       .transform((val) => val === "true" || IS_PACKAGED)
       .optional(),
     INFISICAL_CLOUD: zodStrBool.default("false"),
+    INFISICAL_DEDICATED: zodStrBool.default("false"),
     MAINTENANCE_MODE: zodStrBool.default("false"),
     CAPTCHA_SECRET: zpStr(z.string().optional()),
     CAPTCHA_SITE_KEY: zpStr(z.string().optional()),
@@ -452,6 +480,14 @@ const envSchema = z
           return JSON.parse(val) as string[];
         })
     ),
+
+    // Reverse Proxy -----------------------------------------------------------------------------
+    // Comma-separated list of trusted proxy CIDRs (e.g. "10.0.0.0/8,172.16.0.0/12") or
+    // proxy-addr aliases ("loopback", "linklocal", "uniquelocal"). When set, requests whose
+    // socket remote address is NOT in this set will have forwarded-IP headers ignored; the
+    // socket address is used as the real IP. When unset, legacy first-header-wins behavior
+    // is preserved for backwards compatibility.
+    TRUSTED_PROXY_CIDRS: zpStr(z.string().optional()),
 
     /* OracleDB ----------------------------------------------------------------------------- */
     TNS_ADMIN: zpStr(z.string().optional()),
@@ -938,6 +974,7 @@ export const formatSmtpConfig = () => {
   return {
     host: envCfg.SMTP_HOST,
     port: envCfg.SMTP_PORT,
+    name: envCfg.SMTP_HELO_HOST,
     auth:
       envCfg.SMTP_USERNAME && envCfg.SMTP_PASSWORD
         ? { user: envCfg.SMTP_USERNAME, pass: envCfg.SMTP_PASSWORD }

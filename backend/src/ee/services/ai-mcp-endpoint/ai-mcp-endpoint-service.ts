@@ -9,7 +9,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { z } from "zod";
 
 import { ActionProjectType, TAiMcpEndpoints } from "@app/db/schemas";
-import { KeyStorePrefixes, TKeyStoreFactory } from "@app/keystore/keystore";
+import { KeyStorePrefixes, KeyStoreTtls, TKeyStoreFactory } from "@app/keystore/keystore";
 import { getConfig } from "@app/lib/config/env";
 import { crypto as cryptoModule } from "@app/lib/crypto";
 import { DatabaseErrorCode } from "@app/lib/error-codes";
@@ -19,6 +19,8 @@ import { setupRelayServer } from "@app/lib/gateway-v2/gateway-v2";
 import { logger } from "@app/lib/logger";
 import { ms } from "@app/lib/ms";
 import { PiiEntityType, redactPiiFromObject } from "@app/lib/pii";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { ActorType, AuthMethod, AuthTokenType } from "@app/services/auth/auth-type";
 import { TAuthTokenServiceFactory } from "@app/services/auth-token/auth-token-service";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
@@ -28,6 +30,7 @@ import { TUserDALFactory } from "@app/services/user/user-dal";
 import { TAiMcpActivityLogServiceFactory } from "../ai-mcp-activity-log/ai-mcp-activity-log-service";
 import { TAiMcpServerDALFactory } from "../ai-mcp-server/ai-mcp-server-dal";
 import { AiMcpServerCredentialMode } from "../ai-mcp-server/ai-mcp-server-enum";
+import { ssrfSafeMcpFetch } from "../ai-mcp-server/ai-mcp-server-fns";
 import { TAiMcpServerServiceFactory } from "../ai-mcp-server/ai-mcp-server-service";
 import { TAiMcpServerToolDALFactory } from "../ai-mcp-server/ai-mcp-server-tool-dal";
 import { TAiMcpServerUserCredentialDALFactory } from "../ai-mcp-server/ai-mcp-server-user-credential-dal";
@@ -111,8 +114,6 @@ const OauthChallengeCodeSchema = z.object({
     actorUserAgent: z.string()
   })
 });
-
-const OAUTH_FLOW_EXPIRY_IN_SECS = 5 * 60;
 
 // PKCE challenge computation
 const computePkceChallenge = (codeVerifier: string) => {
@@ -233,7 +234,7 @@ export const aiMcpEndpointServiceFactory = ({
       subject(ProjectPermissionSub.McpEndpoints, { name: endpoint.name })
     );
 
-    const user = await userDAL.findById(userId);
+    const user = await requestMemoize(requestMemoKeys.userFindById(userId), () => userDAL.findById(userId));
     if (!user) {
       throw new NotFoundError({ message: `User with ID '${userId}' not found` });
     }
@@ -322,6 +323,7 @@ export const aiMcpEndpointServiceFactory = ({
           });
 
           const clientTransport = new StreamableHTTPClientTransport(new URL(serverUrl), {
+            fetch: ssrfSafeMcpFetch,
             requestInit: { headers }
           });
 
@@ -1017,7 +1019,7 @@ export const aiMcpEndpointServiceFactory = ({
 
     await keyStore.setItemWithExpiry(
       KeyStorePrefixes.AiMcpEndpointOAuthClient(clientId),
-      OAUTH_FLOW_EXPIRY_IN_SECS,
+      KeyStoreTtls.AiMcpEndpointOAuthFlowInSeconds,
       JSON.stringify(payload)
     );
 
@@ -1033,7 +1035,7 @@ export const aiMcpEndpointServiceFactory = ({
     // Update with state
     await keyStore.setItemWithExpiry(
       KeyStorePrefixes.AiMcpEndpointOAuthClient(clientId),
-      OAUTH_FLOW_EXPIRY_IN_SECS,
+      KeyStoreTtls.AiMcpEndpointOAuthFlowInSeconds,
       JSON.stringify({ ...JSON.parse(oauthClientCache), state })
     );
   };
@@ -1083,7 +1085,7 @@ export const aiMcpEndpointServiceFactory = ({
     const code = crypto.randomBytes(32).toString("hex");
     await keyStore.setItemWithExpiry(
       KeyStorePrefixes.AiMcpEndpointOAuthCode(clientId, code),
-      OAUTH_FLOW_EXPIRY_IN_SECS,
+      KeyStoreTtls.AiMcpEndpointOAuthFlowInSeconds,
       JSON.stringify({
         codeChallenge,
         codeChallengeMethod,
@@ -1352,6 +1354,7 @@ export const aiMcpEndpointServiceFactory = ({
         });
 
         const transport = new StreamableHTTPClientTransport(new URL(targetUrl), {
+          fetch: ssrfSafeMcpFetch,
           requestInit: {
             headers: {
               Authorization: `Bearer ${accessToken}`
@@ -1368,11 +1371,12 @@ export const aiMcpEndpointServiceFactory = ({
         const err = error as { code?: string | number; cause?: { code?: string } };
         const errCode = err?.code || err?.cause?.code;
 
-        let message = "An unknown error occurred";
+        // All non-auth failures share one message: separating connection-refused
+        // from other errors would let an attacker probe whether internal ports
+        // are open by cycling redirect targets.
+        let message = "Unable to verify token";
         if (errCode === 401 || errCode === 403) {
           message = "Invalid token";
-        } else if (errCode === "ECONNREFUSED" || errCode === "ENOTFOUND" || errCode === "ETIMEDOUT") {
-          message = "Server unreachable";
         }
 
         return { valid: false, message };

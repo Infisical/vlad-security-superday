@@ -6,6 +6,8 @@ import { AccessScope, OrganizationActionScope, OrgMembershipRole, TGroups, TRole
 import { TOidcConfigDALFactory } from "@app/ee/services/oidc/oidc-config-dal";
 import { BadRequestError, NotFoundError, PermissionBoundaryError, UnauthorizedError } from "@app/lib/errors";
 import { alphaNumericNanoId } from "@app/lib/nanoid";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { TGenericPermission } from "@app/lib/types";
 import { TIdentityDALFactory } from "@app/services/identity/identity-dal";
 import { TMembershipDALFactory } from "@app/services/membership/membership-dal";
@@ -78,10 +80,7 @@ type TGroupServiceFactoryDep = {
   projectDAL: Pick<TProjectDALFactory, "findProjectGhostUser" | "findById">;
   projectBotDAL: Pick<TProjectBotDALFactory, "findOne">;
   projectKeyDAL: Pick<TProjectKeyDALFactory, "find" | "delete" | "findLatestProjectKey" | "insertMany">;
-  permissionService: Pick<
-    TPermissionServiceFactory,
-    "getOrgPermission" | "getOrgPermissionByRoles" | "invalidateProjectPermissionCache"
-  >;
+  permissionService: Pick<TPermissionServiceFactory, "getOrgPermission" | "getOrgPermissionByRoles">;
   licenseService: Pick<TLicenseServiceFactory, "getPlan">;
   oidcConfigDAL: Pick<TOidcConfigDALFactory, "findOne">;
 };
@@ -125,7 +124,9 @@ export const groupServiceFactory = ({
       });
 
     const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles([role], actorOrgId);
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+      orgDAL.findById(actorOrgId)
+    );
     const isCustomRole = Boolean(rolePermissionDetails?.role);
     if (role !== OrgMembershipRole.NoAccess) {
       const permissionBoundary = validatePrivilegeChangeOperation(
@@ -238,7 +239,9 @@ export const groupServiceFactory = ({
     if (role) {
       const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles([role], actorOrgId);
 
-      const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+      const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+        orgDAL.findById(actorOrgId)
+      );
       const isCustomRole = Boolean(rolePermissionDetails?.role);
 
       const permissionBoundary = validatePrivilegeChangeOperation(
@@ -579,10 +582,16 @@ export const groupServiceFactory = ({
     const isLinkedGroup = group.orgId !== actorOrgId;
 
     if (isLinkedGroup) {
-      return unlinkGroupFromSubOrg({ groupId: id, groupMembershipId: groupMembership.id, actorOrgId });
+      const unlinkedGroup = await unlinkGroupFromSubOrg({
+        groupId: id,
+        groupMembershipId: groupMembership.id,
+        actorOrgId
+      });
+      return { group: unlinkedGroup, isUnlinked: true };
     }
 
-    return deleteOwnedGroup({ groupId: id, actorOrgId });
+    const deletedGroup = await deleteOwnedGroup({ groupId: id, actorOrgId });
+    return { group: deletedGroup, isUnlinked: false };
   };
 
   const getGroupById = async ({ id, actor, actorId, actorAuthMethod, actorOrgId }: TGetGroupByIdDTO) => {
@@ -883,7 +892,9 @@ export const groupServiceFactory = ({
 
     const groupRoles = groupMembership.roles.map((el) => el.customRoleSlug || el.role);
     const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles(groupRoles, actorOrgId);
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+      orgDAL.findById(actorOrgId)
+    );
 
     // check if user has broader or equal to privileges than group
     const permissionBoundary = validatePrivilegeChangeOperation(
@@ -923,7 +934,7 @@ export const groupServiceFactory = ({
       projectBotDAL
     });
 
-    return users[0];
+    return { user: users[0], group: groupMembership.group };
   };
 
   const addMachineIdentityToGroup = async ({
@@ -962,7 +973,9 @@ export const groupServiceFactory = ({
 
     const groupRoles = groupMembership.roles.map((el) => el.customRoleSlug || el.role);
     const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles(groupRoles, actorOrgId);
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+      orgDAL.findById(actorOrgId)
+    );
 
     // check if user has broader or equal to privileges than group
     const permissionBoundary = validatePrivilegeChangeOperation(
@@ -1002,7 +1015,7 @@ export const groupServiceFactory = ({
       identityGroupMembershipDAL
     });
 
-    return identities[0];
+    return { identity: identities[0], group: groupMembership.group };
   };
 
   const removeUserFromGroup = async ({
@@ -1053,7 +1066,9 @@ export const groupServiceFactory = ({
 
     const groupRoles = groupMembership.roles.map((el) => el.customRoleSlug || el.role);
     const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles(groupRoles, actorOrgId);
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+      orgDAL.findById(actorOrgId)
+    );
 
     // check if user has broader or equal to privileges than group
     const permissionBoundary = validatePrivilegeChangeOperation(
@@ -1092,7 +1107,7 @@ export const groupServiceFactory = ({
       identityIds: []
     });
 
-    return users[0];
+    return { user: users[0], group: groupMembership.group };
   };
 
   const removeMachineIdentityFromGroup = async ({
@@ -1130,7 +1145,9 @@ export const groupServiceFactory = ({
 
     const groupRoles = groupMembership.roles.map((el) => el.customRoleSlug || el.role);
     const [rolePermissionDetails] = await permissionService.getOrgPermissionByRoles(groupRoles, actorOrgId);
-    const { shouldUseNewPrivilegeSystem } = await orgDAL.findById(actorOrgId);
+    const { shouldUseNewPrivilegeSystem } = await requestMemoize(requestMemoKeys.orgFindById(actorOrgId), () =>
+      orgDAL.findById(actorOrgId)
+    );
 
     // check if user has broader or equal to privileges than group
     const permissionBoundary = validatePrivilegeChangeOperation(
@@ -1166,7 +1183,8 @@ export const groupServiceFactory = ({
       identityIds: [identityId],
       identityDAL,
       membershipDAL,
-      identityGroupMembershipDAL
+      identityGroupMembershipDAL,
+      membershipGroupDAL
     });
 
     await cleanUpSubOrgProjectMemberships({
@@ -1175,7 +1193,7 @@ export const groupServiceFactory = ({
       identityIds: [identityId]
     });
 
-    return identities[0];
+    return { identity: identities[0], group: groupMembership.group };
   };
 
   return {

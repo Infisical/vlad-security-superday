@@ -7,6 +7,8 @@ import { BadRequestError, ForbiddenRequestError, NotFoundError } from "@app/lib/
 import { GatewayProxyProtocol } from "@app/lib/gateway/types";
 import { createGatewayConnection, createRelayConnection } from "@app/lib/gateway-v2/gateway-v2";
 import { logger } from "@app/lib/logger";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { OrgServiceActor } from "@app/lib/types";
 import { ActorType } from "@app/services/auth/auth-type";
 import { TKmsServiceFactory } from "@app/services/kms/kms-service";
@@ -57,13 +59,14 @@ export const pamSessionServiceFactory = ({
       status: string;
       expiresAt: Date | null;
       gatewayIdentityId?: string | null;
+      gatewayId?: string | null;
       projectId?: string | null;
     }
   >(
     session: T
   ): Promise<T> => {
     // Skip gateway-based sessions - they have their own lifecycle managed by the gateway
-    if (session.gatewayIdentityId) {
+    if (session.gatewayIdentityId || session.gatewayId) {
       return session;
     }
 
@@ -136,14 +139,12 @@ export const pamSessionServiceFactory = ({
 
     const sessions = await pamSessionDAL.findByProjectId(projectId);
 
-    return {
-      sessions: await Promise.all(sessions.map((session) => decryptSession(session, projectId, kmsService)))
-    };
+    return { sessions };
   };
 
   const updateLogsById = async ({ sessionId, logs }: TUpdateSessionLogsDTO, actor: OrgServiceActor) => {
-    // To be hit by gateways only
-    if (actor.type !== ActorType.IDENTITY) {
+    // To be hit by gateways only (identity-based or enrollment-flow)
+    if (actor.type !== ActorType.IDENTITY && actor.type !== ActorType.GATEWAY) {
       throw new ForbiddenRequestError({ message: "Only gateways can perform this action" });
     }
 
@@ -154,25 +155,37 @@ export const pamSessionServiceFactory = ({
       throw new BadRequestError({ message: "Cannot update logs for sessions with existing logs" });
     }
 
-    const project = await projectDAL.findById(session.projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(session.projectId), () =>
+      projectDAL.findById(session.projectId)
+    );
     if (!project) throw new NotFoundError({ message: `Project with ID '${session.projectId}' not found` });
 
-    const { permission } = await permissionService.getOrgPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      orgId: project.orgId,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      scope: OrganizationActionScope.Any
-    });
+    if (actor.type === ActorType.IDENTITY) {
+      const { permission } = await permissionService.getOrgPermission({
+        actor: actor.type,
+        actorId: actor.id,
+        orgId: project.orgId,
+        actorAuthMethod: actor.authMethod,
+        actorOrgId: actor.orgId,
+        scope: OrganizationActionScope.Any
+      });
 
-    ForbiddenError.from(permission).throwUnlessCan(
-      OrgPermissionGatewayActions.CreateGateways,
-      OrgPermissionSubjects.Gateway
-    );
+      ForbiddenError.from(permission).throwUnlessCan(
+        OrgPermissionGatewayActions.CreateGateways,
+        OrgPermissionSubjects.Gateway
+      );
+    } else if (actor.type === ActorType.GATEWAY) {
+      if (project.orgId !== actor.orgId) {
+        throw new ForbiddenRequestError({ message: "Gateway does not have access to this session" });
+      }
+    }
 
-    if (session.gatewayIdentityId && session.gatewayIdentityId !== actor.id) {
-      throw new ForbiddenRequestError({ message: "Identity does not have access to update logs for this session" });
+    const authorized =
+      actor.type === ActorType.GATEWAY
+        ? !session.gatewayId || session.gatewayId === actor.id
+        : !session.gatewayIdentityId || session.gatewayIdentityId === actor.id;
+    if (!authorized) {
+      throw new ForbiddenRequestError({ message: "Gateway does not have access to update logs for this session" });
     }
 
     const { encryptor } = await kmsService.createCipherPairWithDataKey({
@@ -188,26 +201,28 @@ export const pamSessionServiceFactory = ({
       encryptedLogsBlob: cipherTextBlob
     });
 
-    return { session: updatedSession, projectId: project.id };
+    return { session: updatedSession, projectId: session.projectId };
   };
 
   const endSessionById = async (sessionId: string, actor: OrgServiceActor) => {
     const session = await pamSessionDAL.findById(sessionId);
     if (!session) throw new NotFoundError({ message: `Session with ID '${sessionId}' not found` });
 
-    const project = await projectDAL.findById(session.projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(session.projectId), () =>
+      projectDAL.findById(session.projectId)
+    );
     if (!project) throw new NotFoundError({ message: `Project with ID '${session.projectId}' not found` });
 
-    const { permission } = await permissionService.getOrgPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      orgId: project.orgId,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      scope: OrganizationActionScope.Any
-    });
-
     if (actor.type === ActorType.IDENTITY) {
+      const { permission } = await permissionService.getOrgPermission({
+        actor: actor.type,
+        actorId: actor.id,
+        orgId: project.orgId,
+        actorAuthMethod: actor.authMethod,
+        actorOrgId: actor.orgId,
+        scope: OrganizationActionScope.Any
+      });
+
       ForbiddenError.from(permission).throwUnlessCan(
         OrgPermissionGatewayActions.CreateGateways,
         OrgPermissionSubjects.Gateway
@@ -216,12 +231,19 @@ export const pamSessionServiceFactory = ({
       if (session.gatewayIdentityId && session.gatewayIdentityId !== actor.id) {
         throw new ForbiddenRequestError({ message: "Identity does not have access to end this session" });
       }
+    } else if (actor.type === ActorType.GATEWAY) {
+      if (project.orgId !== actor.orgId) {
+        throw new ForbiddenRequestError({ message: "Gateway does not have access to this session" });
+      }
+      if (session.gatewayId && session.gatewayId !== actor.id) {
+        throw new ForbiddenRequestError({ message: "Gateway does not have access to end this session" });
+      }
     } else if (actor.type === ActorType.USER) {
       if (session.userId !== actor.id) {
         throw new ForbiddenRequestError({ message: "You are not authorized to end this session" });
       }
     } else {
-      throw new ForbiddenRequestError({ message: "Only identities and users can perform this action" });
+      throw new ForbiddenRequestError({ message: "Only gateways and users can perform this action" });
     }
 
     const updatedSession = await pamSessionDAL.endSessionById(sessionId);
@@ -229,27 +251,24 @@ export const pamSessionServiceFactory = ({
       if (session.status !== PamSessionStatus.Ended && session.status !== PamSessionStatus.Terminated) {
         throw new BadRequestError({ message: "Cannot end sessions that are not active or starting" });
       }
-      return { session, projectId: project.id, alreadyEnded: true };
+      return { session, projectId: session.projectId, alreadyEnded: true };
     }
 
     // Fire-and-forget AI summarization
     void (async () => {
       try {
-        await pamSessionAiSummaryService.queueAiSummary(sessionId, project.id);
+        await pamSessionAiSummaryService.queueAiSummary(sessionId, session.projectId);
       } catch (err) {
         logger.error({ sessionId, err }, `Failed to queue AI summary for ended session [sessionId=${sessionId}]`);
       }
     })();
 
-    return { session: updatedSession, projectId: project.id, alreadyEnded: false };
+    return { session: updatedSession, projectId: session.projectId, alreadyEnded: false };
   };
 
   const terminateSessionById = async (sessionId: string, actor: OrgServiceActor) => {
     const session = await pamSessionDAL.findById(sessionId);
     if (!session) throw new NotFoundError({ message: `Session with ID '${sessionId}' not found` });
-
-    const project = await projectDAL.findById(session.projectId);
-    if (!project) throw new NotFoundError({ message: `Project with ID '${session.projectId}' not found` });
 
     const { permission } = await permissionService.getProjectPermission({
       actor: actor.type,
@@ -265,16 +284,18 @@ export const pamSessionServiceFactory = ({
       ProjectPermissionSub.PamSessions
     );
 
+    // No project lookup needed: getProjectPermission above throws NotFoundError if the
+    // project doesn't exist, and session.projectId === project.id by definition.
     // Atomic update: only transitions active/starting → terminated
     const updatedSession = await pamSessionDAL.terminateSessionById(sessionId);
     if (!updatedSession) {
-      return { session, projectId: project.id, alreadyEnded: true };
+      return { session, projectId: session.projectId, alreadyEnded: true };
     }
 
     // Fire-and-forget AI summarization
     void (async () => {
       try {
-        await pamSessionAiSummaryService.queueAiSummary(sessionId, project.id);
+        await pamSessionAiSummaryService.queueAiSummary(sessionId, session.projectId);
       } catch (err) {
         logger.error({ sessionId, err }, `Failed to queue AI summary for terminated session [sessionId=${sessionId}]`);
       }
@@ -285,7 +306,7 @@ export const pamSessionServiceFactory = ({
       void (async () => {
         let relayConn: net.Socket | null = null;
         try {
-          const user = await userDAL.findById(actor.id);
+          const user = await requestMemoize(requestMemoKeys.userFindById(actor.id), () => userDAL.findById(actor.id));
           const certs = await gatewayV2Service.getPAMConnectionDetails({
             gatewayId: session.gatewayId,
             sessionId,
@@ -326,7 +347,7 @@ export const pamSessionServiceFactory = ({
       })();
     }
 
-    return { session: updatedSession, projectId: project.id, alreadyEnded: false };
+    return { session: updatedSession, projectId: session.projectId, alreadyEnded: false };
   };
 
   const getSessionLogs = async (sessionId: string, offset: number, limit: number, actor: OrgServiceActor) => {
@@ -375,32 +396,45 @@ export const pamSessionServiceFactory = ({
   };
 
   const uploadEventBatch = async ({ sessionId, startOffset, events }: TUploadEventBatchDTO, actor: OrgServiceActor) => {
-    if (actor.type !== ActorType.IDENTITY) {
+    // To be hit by gateways only (identity-based or enrollment-flow)
+    if (actor.type !== ActorType.IDENTITY && actor.type !== ActorType.GATEWAY) {
       throw new ForbiddenRequestError({ message: "Only gateways can perform this action" });
     }
 
     const session = await pamSessionDAL.findById(sessionId);
     if (!session) throw new NotFoundError({ message: `Session with ID '${sessionId}' not found` });
 
-    const project = await projectDAL.findById(session.projectId);
+    const project = await requestMemoize(requestMemoKeys.projectFindById(session.projectId), () =>
+      projectDAL.findById(session.projectId)
+    );
     if (!project) throw new NotFoundError({ message: `Project with ID '${session.projectId}' not found` });
 
-    const { permission } = await permissionService.getOrgPermission({
-      actor: actor.type,
-      actorId: actor.id,
-      orgId: project.orgId,
-      actorAuthMethod: actor.authMethod,
-      actorOrgId: actor.orgId,
-      scope: OrganizationActionScope.Any
-    });
+    if (actor.type === ActorType.IDENTITY) {
+      const { permission } = await permissionService.getOrgPermission({
+        actor: actor.type,
+        actorId: actor.id,
+        orgId: project.orgId,
+        actorAuthMethod: actor.authMethod,
+        actorOrgId: actor.orgId,
+        scope: OrganizationActionScope.Any
+      });
 
-    ForbiddenError.from(permission).throwUnlessCan(
-      OrgPermissionGatewayActions.CreateGateways,
-      OrgPermissionSubjects.Gateway
-    );
+      ForbiddenError.from(permission).throwUnlessCan(
+        OrgPermissionGatewayActions.CreateGateways,
+        OrgPermissionSubjects.Gateway
+      );
+    } else if (actor.type === ActorType.GATEWAY) {
+      if (project.orgId !== actor.orgId) {
+        throw new ForbiddenRequestError({ message: "Gateway does not have access to this session" });
+      }
+    }
 
-    if (session.gatewayIdentityId && session.gatewayIdentityId !== actor.id) {
-      throw new ForbiddenRequestError({ message: "Identity does not have access to upload events for this session" });
+    const authorized =
+      actor.type === ActorType.GATEWAY
+        ? !session.gatewayId || session.gatewayId === actor.id
+        : !session.gatewayIdentityId || session.gatewayIdentityId === actor.id;
+    if (!authorized) {
+      throw new ForbiddenRequestError({ message: "Gateway does not have access to upload events for this session" });
     }
 
     const { encryptor } = await kmsService.createCipherPairWithDataKey({
@@ -412,7 +446,7 @@ export const pamSessionServiceFactory = ({
 
     const { wasInserted } = await pamSessionEventBatchDAL.upsertBatch(sessionId, startOffset, cipherTextBlob);
 
-    return { projectId: project.id, wasInserted };
+    return { projectId: session.projectId, wasInserted };
   };
 
   return { getById, list, getSessionLogs, updateLogsById, endSessionById, terminateSessionById, uploadEventBatch };

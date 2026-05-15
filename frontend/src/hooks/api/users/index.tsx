@@ -4,17 +4,14 @@ export {
   useRequestEmailChangeOTP,
   useRevokeMySessionById,
   useSendEmailVerificationCode,
-  useUpdateUserEmail
+  useUpdateUserEmail,
+  useVerifyCurrentEmailOTP
 } from "./mutation";
 export {
   fetchOrgUsers,
   useAddUsersToOrg,
-  useCreateAPIKey,
-  useDeleteAPIKey,
   useDeleteMe,
   useDeleteOrgMembership,
-  useGetMyAPIKeys,
-  useGetMyAPIKeysV2,
   useGetMyDuplicateAccount,
   useGetMyIp,
   useGetMyOrganizationProjects,

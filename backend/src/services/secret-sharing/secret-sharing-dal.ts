@@ -1,11 +1,10 @@
 import { Knex } from "knex";
 
 import { TDbClient } from "@app/db";
-import { TableName, TSecretSharing } from "@app/db/schemas";
+import { TableName } from "@app/db/schemas";
 import { DatabaseError, NotFoundError } from "@app/lib/errors";
 import { ormify, selectAllTableCols } from "@app/lib/knex";
 import { logger } from "@app/lib/logger";
-import { QueueName } from "@app/queue";
 
 import { SecretSharingType } from "./secret-sharing-types";
 
@@ -88,19 +87,16 @@ export const secretSharingDALFactory = (db: TDbClient) => {
   };
 
   const pruneExpiredSharedSecrets = async (tx?: Knex) => {
-    logger.info(`${QueueName.DailyResourceCleanUp}: pruning expired shared secret started`);
+    logger.info(`daily-resource-cleanup: pruning expired shared secret started`);
     try {
-      const today = new Date();
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
       const docs = await (tx || db)(TableName.SecretSharing)
-        .where("expiresAt", "<", today)
-        .andWhere("encryptedValue", "<>", "")
+        .where("expiresAt", "<", sevenDaysAgo)
         .andWhere("type", SecretSharingType.Share)
-        .update({
-          encryptedValue: "",
-          tag: "",
-          iv: ""
-        });
-      logger.info(`${QueueName.DailyResourceCleanUp}: pruning expired shared secret completed`);
+        .del();
+      logger.info(`daily-resource-cleanup: pruning expired shared secret completed`);
       return docs;
     } catch (error) {
       throw new DatabaseError({ error, name: "pruneExpiredSharedSecrets" });
@@ -108,18 +104,18 @@ export const secretSharingDALFactory = (db: TDbClient) => {
   };
 
   const pruneExpiredSecretRequests = async (tx?: Knex) => {
-    logger.info(`${QueueName.DailyResourceCleanUp}: pruning expired secret requests started`);
+    logger.info(`daily-resource-cleanup: pruning expired secret requests started`);
     try {
-      const today = new Date();
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
       const docs = await (tx || db)(TableName.SecretSharing)
         .whereNotNull("expiresAt")
-        .andWhere("expiresAt", "<", today)
-        .andWhere("encryptedSecret", null)
+        .andWhere("expiresAt", "<", sevenDaysAgo)
         .andWhere("type", SecretSharingType.Request)
         .delete();
 
-      logger.info(`${QueueName.DailyResourceCleanUp}: pruning expired secret requests completed`);
+      logger.info(`daily-resource-cleanup: pruning expired secret requests completed`);
 
       return docs;
     } catch (error) {
@@ -127,31 +123,18 @@ export const secretSharingDALFactory = (db: TDbClient) => {
     }
   };
 
-  const findActiveSharedSecrets = async (filters: Partial<TSecretSharing>, tx?: Knex) => {
+  const softDeleteById = async (id: string, tx?: Knex) => {
     try {
-      const now = new Date();
-      return await (tx || db.replicaNode())(TableName.SecretSharing)
-        .where(filters)
-        .andWhere("expiresAt", ">", now)
-        .andWhere("encryptedValue", "<>", "")
-        .andWhere("type", SecretSharingType.Share)
-        .select(selectAllTableCols(TableName.SecretSharing))
-        .orderBy("expiresAt", "asc");
-    } catch (error) {
-      throw new DatabaseError({
-        error,
-        name: "Find Active Shared Secrets"
-      });
-    }
-  };
-
-  const softDeleteById = async (id: string) => {
-    try {
-      await sharedSecretOrm.updateById(id, {
-        encryptedValue: "",
-        iv: "",
-        tag: ""
-      });
+      await sharedSecretOrm.updateById(
+        id,
+        {
+          encryptedValue: "",
+          iv: "",
+          tag: "",
+          encryptedSecret: null
+        },
+        tx
+      );
     } catch (error) {
       throw new DatabaseError({
         error,
@@ -166,7 +149,6 @@ export const secretSharingDALFactory = (db: TDbClient) => {
     pruneExpiredSharedSecrets,
     pruneExpiredSecretRequests,
     softDeleteById,
-    findActiveSharedSecrets,
     getSecretRequestById
   };
 };

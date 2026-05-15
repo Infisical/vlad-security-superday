@@ -4,9 +4,12 @@ import { AccessScope, OrganizationActionScope, OrgMembershipStatus } from "@app/
 import { TUserGroupMembershipDALFactory } from "@app/ee/services/group/user-group-membership-dal";
 import { TLicenseServiceFactory } from "@app/ee/services/license/license-service";
 import { OrgPermissionActions, OrgPermissionSubjects } from "@app/ee/services/permission/org-permission";
+import { assertPermissionBoundary } from "@app/ee/services/permission/permission-fns";
 import { TPermissionServiceFactory } from "@app/ee/services/permission/permission-service-types";
 import { getConfig } from "@app/lib/config/env";
 import { BadRequestError, ForbiddenRequestError, InternalServerError } from "@app/lib/errors";
+import { requestMemoKeys } from "@app/lib/request-context/memo-keys";
+import { requestMemoize } from "@app/lib/request-context/request-memoizer";
 import { ActorType } from "@app/services/auth/auth-type";
 import { TAuthTokenServiceFactory } from "@app/services/auth-token/auth-token-service";
 import { TokenType } from "@app/services/auth-token/auth-token-types";
@@ -21,7 +24,7 @@ import { TMembershipUserDALFactory } from "../membership-user-dal";
 import { TMembershipUserScopeFactory } from "../membership-user-types";
 
 type TOrgMembershipUserScopeFactoryDep = {
-  permissionService: Pick<TPermissionServiceFactory, "getOrgPermission">;
+  permissionService: Pick<TPermissionServiceFactory, "getOrgPermission" | "getOrgPermissionByRoles">;
   tokenService: Pick<TAuthTokenServiceFactory, "createTokenForUser">;
   userDAL: Pick<TUserDALFactory, "findById">;
   smtpService: Pick<TSmtpService, "sendMail">;
@@ -70,6 +73,20 @@ export const newOrgMembershipUserFactory = ({
     });
     ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Create, OrgPermissionSubjects.Member);
 
+    if (dto.data.roles.length) {
+      const permissionRoles = await permissionService.getOrgPermissionByRoles(
+        dto.data.roles.map((el) => el.role),
+        dto.permission.orgId
+      );
+      for (const permissionRole of permissionRoles) {
+        assertPermissionBoundary(
+          permission,
+          permissionRole.permission,
+          "Cannot grant a role exceeding your own privileges to a new org member"
+        );
+      }
+    }
+
     const plan = await licenseService.getPlan(dto.permission.orgId);
     if (plan?.slug !== "enterprise" && plan?.identityLimit && plan.identitiesUsed >= plan.identityLimit) {
       // limit imposed on number of identities allowed / number of identities used exceeds the number of identities allowed
@@ -79,7 +96,9 @@ export const newOrgMembershipUserFactory = ({
       });
     }
 
-    const org = await orgDAL.findById(dto.permission.orgId);
+    const org = await requestMemoize(requestMemoKeys.orgFindById(dto.permission.orgId), () =>
+      orgDAL.findById(dto.permission.orgId)
+    );
     if (org?.authEnforced) {
       throw new ForbiddenRequestError({
         name: "InviteUser",
@@ -115,14 +134,18 @@ export const newOrgMembershipUserFactory = ({
 
     const actorDetails =
       dto.permission.type === ActorType.USER
-        ? await userDAL.findById(dto.permission.id)
+        ? await requestMemoize(requestMemoKeys.userFindById(dto.permission.id), () =>
+            userDAL.findById(dto.permission.id)
+          )
         : {
             firstName: "Platform Identity",
             email: "identity"
           };
 
     const signUpTokens: { email: string; link: string }[] = [];
-    const orgDetails = await orgDAL.findById(dto.permission.orgId);
+    const orgDetails = await requestMemoize(requestMemoKeys.orgFindById(dto.permission.orgId), () =>
+      orgDAL.findById(dto.permission.orgId)
+    );
     const serverCfg = await getServerCfg();
     const isEmailLoginEnabled =
       !serverCfg.enabledLoginMethods || serverCfg.enabledLoginMethods.includes(LoginMethod.EMAIL);
@@ -204,6 +227,20 @@ export const newOrgMembershipUserFactory = ({
       scope: OrganizationActionScope.Any
     });
     ForbiddenError.from(permission).throwUnlessCan(OrgPermissionActions.Edit, OrgPermissionSubjects.Member);
+
+    if (dto.data.roles.length) {
+      const permissionRoles = await permissionService.getOrgPermissionByRoles(
+        dto.data.roles.map((el) => el.role),
+        dto.permission.orgId
+      );
+      for (const permissionRole of permissionRoles) {
+        assertPermissionBoundary(
+          permission,
+          permissionRole.permission,
+          "Cannot grant a role exceeding your own privileges to an existing org member"
+        );
+      }
+    }
   };
 
   const onDeleteMembershipUserGuard: TMembershipUserScopeFactory["onDeleteMembershipUserGuard"] = async (dto) => {

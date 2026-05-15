@@ -284,6 +284,12 @@ Supports conditions and permission inversion.
 | `delete-root-credential` | Remove dynamic secrets | `environment`, `secretPath`, `metadata` |
 | `lease` | Create dynamic secret leases | `environment`, `secretPath`, `metadata` |
 
+#### Subject: `insights`
+
+| Action | Description                                                                          |
+| ------ | ------------------------------------------------------------------------------------ |
+| `read` | View project insights dashboard, including secret access volume, access locations, auth method distribution, and rotation/reminder calendar |
+
 ### Key Management Service (KMS)
 
 #### Subject: `kms`
@@ -448,6 +454,12 @@ Supports conditions and permission inversion.
 | `edit`             | Modify existing PAM accounts                     | `resourceName`, `accountName`, `resourceType`, `metadata` |
 | `delete`           | Remove PAM accounts                              | `resourceName`, `accountName`, `resourceType`, `metadata` |
 | `read-credentials` | View sensitive account credentials like passwords and private keys | `resourceName`, `accountName`, `resourceType`, `metadata` |
+
+#### Subject: `pam-insights`
+
+| Action | Description |
+| ------ | ----------- |
+| `read` | View the PAM insights dashboard, including resource and account totals, session activity, top actors, resource breakdown, and upcoming rotations |
 
 ## Condition Operators
 

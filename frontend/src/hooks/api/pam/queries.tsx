@@ -60,7 +60,6 @@ export const pamKeys = {
     projectId,
     { search }
   ],
-  getAccountPolicy: (policyId: string) => [...pamKeys.accountPolicy(), "get", policyId],
   getSession: (sessionId: string) => [...pamKeys.session(), "get", sessionId],
   getSessionLogs: (sessionId: string) => [...pamKeys.session(), "logs", sessionId],
   listSessions: (projectId: string) => [...pamKeys.session(), "list", projectId],
@@ -169,32 +168,6 @@ export const useGetPamResourceById = (
   });
 };
 
-export const useListRelatedResources = (
-  resourceId?: string,
-  options?: Omit<
-    UseQueryOptions<
-      TPamResource[],
-      unknown,
-      TPamResource[],
-      ReturnType<typeof pamKeys.listRelatedResources>
-    >,
-    "queryKey" | "queryFn"
-  >
-) => {
-  return useQuery({
-    queryKey: pamKeys.listRelatedResources(resourceId || ""),
-    queryFn: async () => {
-      const { data } = await apiRequest.get<{ resources: TPamResource[] }>(
-        `/api/v1/pam/resources/active-directory/${resourceId}/related-resources`
-      );
-
-      return data.resources;
-    },
-    enabled: !!resourceId && (options?.enabled ?? true),
-    ...options
-  });
-};
-
 export const useGetPamResourceDependencies = (
   resourceType?: PamResourceType,
   resourceId?: string
@@ -232,13 +205,17 @@ export const useListPamAccounts = (
   return useQuery({
     queryKey: pamKeys.listAccounts(params),
     queryFn: async () => {
-      const { metadataFilter, filterResourceIds, ...rest } = params;
+      const { metadataFilter, filterResourceIds, filterDomainIds, ...rest } = params;
       const { data } = await apiRequest.post<TListPamAccountsResponse>(
         "/api/v1/pam/accounts/search",
         {
           ...rest,
           metadata: metadataFilter,
           filterResourceIds: filterResourceIds
+            ?.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          filterDomainIds: filterDomainIds
             ?.split(",")
             .map((s) => s.trim())
             .filter(Boolean)
@@ -360,17 +337,15 @@ const fetchUntilEventTarget = async (
   return { logs: accumulatedLogs, cursor, hasMore };
 };
 
-export const useGetPamSessionLogs = (sessionId: string, isActive: boolean) => {
+export const useGetPamSessionLogs = (sessionId: string, isActive: boolean, enabled: boolean) => {
   const [logs, setLogs] = useState<TPamSessionLogsPage["logs"]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const batchCursorRef = useRef(0);
 
-  // Initial fetch: load up to LOGS_EVENT_PAGE_SIZE events for completed sessions,
-  // or a single batch page for live sessions (polling handles the rest).
   useEffect(() => {
-    if (!sessionId) return undefined;
+    if (!enabled || !sessionId) return undefined;
     let cancelled = false;
 
     const fetchInitial = async () => {
@@ -394,11 +369,10 @@ export const useGetPamSessionLogs = (sessionId: string, isActive: boolean) => {
     return () => {
       cancelled = true;
     };
-  }, [sessionId, isActive]);
+  }, [sessionId, isActive, enabled]);
 
-  // Live polling: advance cursor every 5s, catches up then tracks new batches
   useEffect(() => {
-    if (!isActive || !sessionId) return undefined;
+    if (!enabled || !isActive || !sessionId) return undefined;
 
     const interval = setInterval(async () => {
       try {
@@ -417,7 +391,7 @@ export const useGetPamSessionLogs = (sessionId: string, isActive: boolean) => {
     }, LOGS_POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [sessionId, isActive]);
+  }, [sessionId, isActive, enabled]);
 
   // Load more: fetch the next LOGS_EVENT_PAGE_SIZE events (completed sessions only)
   const loadMore = async () => {

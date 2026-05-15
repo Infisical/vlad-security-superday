@@ -8,10 +8,17 @@ import { getConfig } from "@app/lib/config/env";
 import { DatabaseError, GatewayTimeoutError } from "@app/lib/errors";
 import { ormify, selectAllTableCols, TOrmify } from "@app/lib/knex";
 import { logger } from "@app/lib/logger";
-import { QueueName } from "@app/queue";
 import { ActorType } from "@app/services/auth/auth-type";
 
 import { ACTOR_TYPE_TO_METADATA_ID_KEY, EventType, filterableSecretEvents } from "./audit-log-types";
+
+type TAggregateQuery = {
+  orgId: string;
+  projectId: string;
+  eventTypes: EventType[];
+  startDate: string;
+  endDate: string;
+};
 
 export interface TAuditLogDALFactory extends Omit<TOrmify<TableName.AuditLog>, "find"> {
   pruneAuditLog: () => Promise<void>;
@@ -27,6 +34,15 @@ export interface TAuditLogDALFactory extends Omit<TOrmify<TableName.AuditLog>, "
     },
     tx?: knex.Knex
   ) => Promise<TAuditLogs[]>;
+  countByDateAndActor: (
+    arg: TAggregateQuery,
+    tx?: knex.Knex
+  ) => Promise<{ date: string; actor: string; actorMetadata: unknown; count: number }[]>;
+  countByIpAddress: (arg: TAggregateQuery, tx?: knex.Knex) => Promise<{ ipAddress: string; count: number }[]>;
+  countByAuthMethod: (
+    arg: TAggregateQuery,
+    tx?: knex.Knex
+  ) => Promise<{ actor: string; actorMetadata: unknown; count: number }[]>;
 }
 
 type TFindQuery = {
@@ -167,7 +183,7 @@ export const auditLogDALFactory = (db: TDbClient) => {
     let numberOfRetryOnFailure = 0;
     let isRetrying = false;
 
-    logger.info(`${QueueName.DailyResourceCleanUp}: audit log started`);
+    logger.info(`daily-resource-cleanup: audit log started`);
     do {
       try {
         // eslint-disable-next-line no-await-in-loop
@@ -200,7 +216,7 @@ export const auditLogDALFactory = (db: TDbClient) => {
       }
       isRetrying = numberOfRetryOnFailure > 0;
     } while (deletedAuditLogIds.length > 0 || (isRetrying && numberOfRetryOnFailure < MAX_RETRY_ON_FAILURE));
-    logger.info(`${QueueName.DailyResourceCleanUp}: audit log completed`);
+    logger.info(`daily-resource-cleanup: audit log completed`);
   };
 
   const getApproximateRowCount: TAuditLogDALFactory["getApproximateRowCount"] = async () => {
@@ -248,5 +264,111 @@ export const auditLogDALFactory = (db: TDbClient) => {
     return auditLogOrm.create(tx);
   };
 
-  return { ...auditLogOrm, create, pruneAuditLog, getApproximateRowCount, find };
+  const countByDateAndActor = async (
+    {
+      orgId,
+      projectId,
+      eventTypes,
+      startDate,
+      endDate
+    }: {
+      orgId: string;
+      projectId: string;
+      eventTypes: EventType[];
+      startDate: string;
+      endDate: string;
+    },
+    tx?: knex.Knex
+  ) => {
+    const rows = await (tx || db.replicaNode())(TableName.AuditLog)
+      .where(`${TableName.AuditLog}.orgId`, orgId)
+      .where(`${TableName.AuditLog}.projectId`, projectId)
+      .whereIn(`${TableName.AuditLog}.eventType`, eventTypes)
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" >= ?::timestamptz`, [startDate])
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" < ?::timestamptz`, [endDate])
+      .select(
+        db.raw(`DATE("${TableName.AuditLog}"."createdAt") as date`),
+        `${TableName.AuditLog}.actor`,
+        `${TableName.AuditLog}.actorMetadata`
+      )
+      .groupByRaw(
+        `DATE("${TableName.AuditLog}"."createdAt"), "${TableName.AuditLog}"."actor", "${TableName.AuditLog}"."actorMetadata"`
+      )
+      .select(db.raw("COUNT(*)::int as count"))
+      .timeout(1000 * 120);
+
+    return rows as { date: string; actor: string; actorMetadata: unknown; count: number }[];
+  };
+
+  const countByIpAddress = async (
+    {
+      orgId,
+      projectId,
+      eventTypes,
+      startDate,
+      endDate
+    }: {
+      orgId: string;
+      projectId: string;
+      eventTypes: EventType[];
+      startDate: string;
+      endDate: string;
+    },
+    tx?: knex.Knex
+  ) => {
+    const rows = await (tx || db.replicaNode())(TableName.AuditLog)
+      .where(`${TableName.AuditLog}.orgId`, orgId)
+      .where(`${TableName.AuditLog}.projectId`, projectId)
+      .whereIn(`${TableName.AuditLog}.eventType`, eventTypes)
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" >= ?::timestamptz`, [startDate])
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" < ?::timestamptz`, [endDate])
+      .whereNotNull(`${TableName.AuditLog}.ipAddress`)
+      .select(`${TableName.AuditLog}.ipAddress`)
+      .groupBy(`${TableName.AuditLog}.ipAddress`)
+      .select(db.raw("COUNT(*)::int as count"))
+      .timeout(1000 * 120);
+
+    return rows as { ipAddress: string; count: number }[];
+  };
+
+  const countByAuthMethod = async (
+    {
+      orgId,
+      projectId,
+      eventTypes,
+      startDate,
+      endDate
+    }: {
+      orgId: string;
+      projectId: string;
+      eventTypes: EventType[];
+      startDate: string;
+      endDate: string;
+    },
+    tx?: knex.Knex
+  ) => {
+    const rows = await (tx || db.replicaNode())(TableName.AuditLog)
+      .where(`${TableName.AuditLog}.orgId`, orgId)
+      .where(`${TableName.AuditLog}.projectId`, projectId)
+      .whereIn(`${TableName.AuditLog}.eventType`, eventTypes)
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" >= ?::timestamptz`, [startDate])
+      .whereRaw(`"${TableName.AuditLog}"."createdAt" < ?::timestamptz`, [endDate])
+      .select(`${TableName.AuditLog}.actor`, `${TableName.AuditLog}.actorMetadata`)
+      .groupBy(`${TableName.AuditLog}.actor`, `${TableName.AuditLog}.actorMetadata`)
+      .select(db.raw("COUNT(*)::int as count"))
+      .timeout(1000 * 120);
+
+    return rows as { actor: string; actorMetadata: unknown; count: number }[];
+  };
+
+  return {
+    ...auditLogOrm,
+    create,
+    pruneAuditLog,
+    getApproximateRowCount,
+    find,
+    countByDateAndActor,
+    countByIpAddress,
+    countByAuthMethod
+  };
 };

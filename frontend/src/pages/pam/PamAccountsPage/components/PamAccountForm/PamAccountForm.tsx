@@ -5,6 +5,7 @@ import {
   useCreatePamAccount,
   useUpdatePamAccount
 } from "@app/hooks/api/pam";
+import { PamDomainType } from "@app/hooks/api/pamDomain";
 import { DiscriminativePick } from "@app/types";
 
 import { ActiveDirectoryAccountForm } from "./ActiveDirectoryAccountForm";
@@ -13,6 +14,7 @@ import { KubernetesAccountForm } from "./KubernetesAccountForm";
 import { MongoDBAccountForm } from "./MongoDBAccountForm";
 import { MsSQLAccountForm } from "./MsSQLAccountForm";
 import { MySQLAccountForm } from "./MySQLAccountForm";
+import { OracleDBAccountForm } from "./OracleDBAccountForm";
 import { PostgresAccountForm } from "./PostgresAccountForm";
 import { RedisAccountForm } from "./RedisAccountForm";
 import { SshAccountForm } from "./SshAccountForm";
@@ -57,7 +59,7 @@ const CreateForm = ({
       ...rest,
       folderId,
       resourceId,
-      resourceType,
+      parentType: resourceType,
       projectId,
       internalMetadata,
       policyId
@@ -91,6 +93,15 @@ const CreateForm = ({
     case PamResourceType.MsSQL:
       return (
         <MsSQLAccountForm
+          onSubmit={onSubmit}
+          closeSheet={closeSheet}
+          resourceId={resourceId}
+          resourceType={resourceType}
+        />
+      );
+    case PamResourceType.OracleDB:
+      return (
+        <OracleDBAccountForm
           onSubmit={onSubmit}
           closeSheet={closeSheet}
           resourceId={resourceId}
@@ -151,15 +162,6 @@ const CreateForm = ({
           resourceType={resourceType}
         />
       );
-    case PamResourceType.ActiveDirectory:
-      return (
-        <ActiveDirectoryAccountForm
-          onSubmit={onSubmit}
-          closeSheet={closeSheet}
-          resourceId={resourceId}
-          resourceType={resourceType}
-        />
-      );
     default:
       throw new Error(`Unhandled resource: ${resourceType}`);
   }
@@ -181,7 +183,7 @@ const UpdateForm = ({ account, closeSheet }: UpdateFormProps) => {
     const { internalMetadata, policyId, ...rest } = formData;
     const updatedAccount = await updatePamAccount.mutateAsync({
       accountId: account.id,
-      resourceType: account.resource.resourceType,
+      parentType: account.parentType,
       ...rest,
       internalMetadata,
       policyId
@@ -193,7 +195,7 @@ const UpdateForm = ({ account, closeSheet }: UpdateFormProps) => {
     closeSheet(updatedAccount);
   };
 
-  switch (account.resource.resourceType) {
+  switch (account.parentType) {
     case PamResourceType.Postgres:
       return (
         <PostgresAccountForm account={account as any} onSubmit={onSubmit} closeSheet={closeSheet} />
@@ -205,6 +207,10 @@ const UpdateForm = ({ account, closeSheet }: UpdateFormProps) => {
     case PamResourceType.MsSQL:
       return (
         <MsSQLAccountForm account={account as any} onSubmit={onSubmit} closeSheet={closeSheet} />
+      );
+    case PamResourceType.OracleDB:
+      return (
+        <OracleDBAccountForm account={account as any} onSubmit={onSubmit} closeSheet={closeSheet} />
       );
     case PamResourceType.MongoDB:
       return (
@@ -238,7 +244,7 @@ const UpdateForm = ({ account, closeSheet }: UpdateFormProps) => {
       return (
         <WindowsAccountForm account={account as any} onSubmit={onSubmit} closeSheet={closeSheet} />
       );
-    case PamResourceType.ActiveDirectory:
+    case PamDomainType.ActiveDirectory:
       return (
         <ActiveDirectoryAccountForm
           account={account as any}
@@ -247,7 +253,7 @@ const UpdateForm = ({ account, closeSheet }: UpdateFormProps) => {
         />
       );
     default:
-      throw new Error(`Unhandled resource: ${account.resource.resourceType}`);
+      throw new Error(`Unhandled account type: ${account.parentType}`);
   }
 };
 

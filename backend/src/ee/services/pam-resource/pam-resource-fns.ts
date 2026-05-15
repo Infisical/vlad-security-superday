@@ -4,12 +4,12 @@ import { TKmsServiceFactory } from "@app/services/kms/kms-service";
 import { KmsDataKey } from "@app/services/kms/kms-types";
 
 import { decryptAccountCredentials } from "../pam-account/pam-account-fns";
-import { getActiveDirectoryResourceListItem } from "./active-directory/active-directory-resource-fns";
 import { getAwsIamResourceListItem } from "./aws-iam/aws-iam-resource-fns";
 import { getKubernetesResourceListItem } from "./kubernetes/kubernetes-resource-fns";
 import { getMongoDBResourceListItem } from "./mongodb/mongodb-resource-fns";
 import { getMsSQLResourceListItem } from "./mssql/mssql-resource-fns";
 import { getMySQLResourceListItem } from "./mysql/mysql-resource-fns";
+import { getOracleResourceListItem } from "./oracle/oracle-resource-fns";
 import { TPamResource, TPamResourceConnectionDetails, TPamResourceInternalMetadata } from "./pam-resource-types";
 import { getPostgresResourceListItem } from "./postgres/postgres-resource-fns";
 import { getRedisResourceListItem } from "./redis/redis-resource-fns";
@@ -21,12 +21,12 @@ export const listResourceOptions = () => {
     getPostgresResourceListItem(),
     getMySQLResourceListItem(),
     getMsSQLResourceListItem(),
+    getOracleResourceListItem(),
     getAwsIamResourceListItem(),
     getKubernetesResourceListItem(),
     getRedisResourceListItem(),
     getMongoDBResourceListItem(),
     getWindowsResourceListItem(),
-    getActiveDirectoryResourceListItem(),
     getSshResourceListItem()
   ].sort((a, b) => a.name.localeCompare(b.name));
 };
@@ -122,9 +122,15 @@ export const decryptResource = async (
   projectId: string,
   kmsService: Pick<TKmsServiceFactory, "createCipherPairWithDataKey">
 ) => {
-  let sessionSummaryConfig: { aiInsightsEnabled: boolean; connectionId: string; model: string } | null = null;
+  const {
+    encryptedConnectionDetails,
+    encryptedRotationAccountCredentials,
+    encryptedResourceMetadata,
+    encryptedSessionSummaryConfig,
+    ...rest
+  } = resource;
 
-  const { encryptedSessionSummaryConfig } = resource;
+  let sessionSummaryConfig: { aiInsightsEnabled: boolean; connectionId: string; model: string } | null = null;
 
   if (encryptedSessionSummaryConfig) {
     try {
@@ -146,15 +152,15 @@ export const decryptResource = async (
   }
 
   return {
-    ...resource,
+    ...rest,
     connectionDetails: await decryptResourceConnectionDetails({
-      encryptedConnectionDetails: resource.encryptedConnectionDetails,
+      encryptedConnectionDetails,
       projectId,
       kmsService
     }),
-    rotationAccountCredentials: resource.encryptedRotationAccountCredentials
+    rotationAccountCredentials: encryptedRotationAccountCredentials
       ? await decryptAccountCredentials({
-          encryptedCredentials: resource.encryptedRotationAccountCredentials,
+          encryptedCredentials: encryptedRotationAccountCredentials,
           projectId,
           kmsService
         })

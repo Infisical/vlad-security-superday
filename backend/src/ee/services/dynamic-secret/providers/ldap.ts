@@ -8,6 +8,7 @@ import { z } from "zod";
 import { TDynamicSecrets } from "@app/db/schemas";
 import { BadRequestError } from "@app/lib/errors";
 import { sanitizeString } from "@app/lib/fn";
+import { validateHandlebarTemplate } from "@app/lib/template/validate-handlebars";
 
 import { ActorIdentityAttributes } from "../../dynamic-secret-lease/dynamic-secret-lease-types";
 import { LdapCredentialType, LdapSchema, TDynamicProviderFns } from "./models";
@@ -49,6 +50,25 @@ const generateLDIF = ({
 export const LdapProvider = (): TDynamicProviderFns => {
   const validateProviderInputs = async (inputs: unknown) => {
     const providerInputs = await LdapSchema.parseAsync(inputs);
+
+    if (providerInputs.credentialType === LdapCredentialType.Static) {
+      validateHandlebarTemplate("LDAP rotation", providerInputs.rotationLdif, {
+        allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+      });
+    } else {
+      validateHandlebarTemplate("LDAP creation", providerInputs.creationLdif, {
+        allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+      });
+      validateHandlebarTemplate("LDAP revocation", providerInputs.revocationLdif, {
+        allowedExpressions: (val) => ["Username"].includes(val)
+      });
+      if (providerInputs.rollbackLdif) {
+        validateHandlebarTemplate("LDAP rollback", providerInputs.rollbackLdif, {
+          allowedExpressions: (val) => ["Username", "Password", "EncodedPassword"].includes(val)
+        });
+      }
+    }
+
     return providerInputs;
   };
 
@@ -56,10 +76,12 @@ export const LdapProvider = (): TDynamicProviderFns => {
     return new Promise((resolve, reject) => {
       const client = ldapjs.createClient({
         url: providerInputs.url,
-        tlsOptions: {
-          ca: providerInputs.ca ? providerInputs.ca : null,
-          rejectUnauthorized: !!providerInputs.ca
-        },
+        tlsOptions: providerInputs.ca
+          ? {
+              ca: providerInputs.ca ? providerInputs.ca : null,
+              rejectUnauthorized: providerInputs.sslRejectUnauthorized
+            }
+          : undefined,
         reconnect: true,
         bindDN: providerInputs.binddn,
         bindCredentials: providerInputs.bindpass

@@ -7,6 +7,7 @@ import { Auth0ClientSecretRotationParametersFields } from "./Auth0ClientSecretRo
 import { AwsIamUserSecretRotationParametersFields } from "./AwsIamUserSecretRotationParametersFields";
 import { AzureClientSecretRotationParametersFields } from "./AzureClientSecretRotationParametersFields";
 import { DatabricksServicePrincipalSecretRotationParametersFields } from "./DatabricksServicePrincipalSecretRotationParametersFields";
+import { DatadogApplicationKeySecretRotationParametersFields } from "./DatadogApplicationKeySecretRotationParametersFields";
 import { DbtServiceTokenRotationParametersFields } from "./DbtServiceTokenRotationParametersFields";
 import { HpIloRotationParametersFields } from "./HpIloRotationParametersFields";
 import { LdapPasswordRotationParametersFields } from "./LdapPasswordRotationParametersFields";
@@ -15,6 +16,7 @@ import { OktaClientSecretRotationParametersFields } from "./OktaClientSecretRota
 import { OpenRouterApiKeyRotationParametersFields } from "./OpenRouterApiKeyRotationParametersFields";
 import { RedisCredentialsRotationParametersFields } from "./RedisCredentialsRotationParametersFields";
 import { SqlCredentialsRotationParametersFields } from "./shared";
+import { SupabaseApiKeyRotationParametersFields } from "./SupabaseApiKeyRotationParametersFields";
 import { UnixLinuxLocalAccountRotationParametersFields } from "./UnixLinuxLocalAccountRotationParametersFields";
 import { WindowsLocalAccountRotationParametersFields } from "./WindowsLocalAccountRotationParametersFields";
 
@@ -36,7 +38,9 @@ const COMPONENT_MAP: Record<SecretRotation, React.FC> = {
   [SecretRotation.DbtServiceToken]: DbtServiceTokenRotationParametersFields,
   [SecretRotation.WindowsLocalAccount]: WindowsLocalAccountRotationParametersFields,
   [SecretRotation.OpenRouterApiKey]: OpenRouterApiKeyRotationParametersFields,
-  [SecretRotation.HpIloLocalAccount]: HpIloRotationParametersFields
+  [SecretRotation.HpIloLocalAccount]: HpIloRotationParametersFields,
+  [SecretRotation.SupabaseApiKey]: SupabaseApiKeyRotationParametersFields,
+  [SecretRotation.DatadogApplicationKeySecret]: DatadogApplicationKeySecretRotationParametersFields
 };
 
 export const SecretRotationV2ParametersFields = () => {

@@ -125,11 +125,29 @@ import {
   TValidateDatabricksConnectionCredentialsSchema
 } from "./databricks";
 import {
+  TDatadogConnection,
+  TDatadogConnectionConfig,
+  TDatadogConnectionInput,
+  TValidateDatadogConnectionCredentialsSchema
+} from "./datadog";
+import {
   TDbtConnection,
   TDbtConnectionConfig,
   TDbtConnectionInput,
   TValidateDbtConnectionCredentialsSchema
 } from "./dbt";
+import {
+  TDevinConnection,
+  TDevinConnectionConfig,
+  TDevinConnectionInput,
+  TValidateDevinConnectionCredentialsSchema
+} from "./devin";
+import {
+  TDigiCertConnection,
+  TDigiCertConnectionConfig,
+  TDigiCertConnectionInput,
+  TValidateDigiCertConnectionCredentialsSchema
+} from "./digicert";
 import {
   TDigitalOceanConnection,
   TDigitalOceanConnectionConfig,
@@ -142,6 +160,12 @@ import {
   TDNSMadeEasyConnectionInput,
   TValidateDNSMadeEasyConnectionCredentialsSchema
 } from "./dns-made-easy/dns-made-easy-connection-types";
+import {
+  TDopplerConnection,
+  TDopplerConnectionConfig,
+  TDopplerConnectionInput,
+  TValidateDopplerConnectionCredentialsSchema
+} from "./doppler/doppler-connection-types";
 import {
   TExternalInfisicalConnection,
   TExternalInfisicalConnectionConfig,
@@ -247,11 +271,23 @@ import {
   TValidateOktaConnectionCredentialsSchema
 } from "./okta";
 import {
+  TOnaConnection,
+  TOnaConnectionConfig,
+  TOnaConnectionInput,
+  TValidateOnaConnectionCredentialsSchema
+} from "./ona";
+import {
   TOpenRouterConnection,
   TOpenRouterConnectionConfig,
   TOpenRouterConnectionInput,
   TValidateOpenRouterConnectionCredentialsSchema
 } from "./open-router";
+import {
+  TOvhConnection,
+  TOvhConnectionConfig,
+  TOvhConnectionInput,
+  TValidateOvhConnectionCredentialsSchema
+} from "./ovh";
 import {
   TPostgresConnection,
   TPostgresConnectionInput,
@@ -282,6 +318,12 @@ import {
   TValidateSmbConnectionCredentialsSchema
 } from "./smb";
 import {
+  TSnowflakeConnection,
+  TSnowflakeConnectionConfig,
+  TSnowflakeConnectionInput,
+  TValidateSnowflakeConnectionCredentialsSchema
+} from "./snowflake";
+import {
   TSshConnection,
   TSshConnectionConfig,
   TSshConnectionInput,
@@ -306,11 +348,23 @@ import {
   TValidateTerraformCloudConnectionCredentialsSchema
 } from "./terraform-cloud";
 import {
+  TTravisCIConnection,
+  TTravisCIConnectionConfig,
+  TTravisCIConnectionInput,
+  TValidateTravisCIConnectionCredentialsSchema
+} from "./travis-ci";
+import {
   TValidateVenafiConnectionCredentialsSchema,
   TVenafiConnection,
   TVenafiConnectionConfig,
   TVenafiConnectionInput
 } from "./venafi";
+import {
+  TValidateVenafiTppConnectionCredentialsSchema,
+  TVenafiTppConnection,
+  TVenafiTppConnectionConfig,
+  TVenafiTppConnectionInput
+} from "./venafi-tpp";
 import {
   TValidateVercelConnectionCredentialsSchema,
   TVercelConnection,
@@ -384,9 +438,18 @@ export type TAppConnection = { id: string } & (
   | TCircleCIConnection
   | TAzureEntraIdConnection
   | TVenafiConnection
+  | TVenafiTppConnection
   | TExternalInfisicalConnection
+  | TDopplerConnection
   | TNetScalerConnection
   | TAnthropicConnection
+  | TOvhConnection
+  | TDevinConnection
+  | TOnaConnection
+  | TDigiCertConnection
+  | TTravisCIConnection
+  | TSnowflakeConnection
+  | TDatadogConnection
 );
 
 export type TAppConnectionRaw = NonNullable<Awaited<ReturnType<TAppConnectionDALFactory["findById"]>>>;
@@ -451,9 +514,18 @@ export type TAppConnectionInput = { id: string } & (
   | TCircleCIConnectionInput
   | TAzureEntraIdConnectionInput
   | TVenafiConnectionInput
+  | TVenafiTppConnectionInput
   | TExternalInfisicalConnectionInput
+  | TDopplerConnectionInput
   | TNetScalerConnectionInput
   | TAnthropicConnectionInput
+  | TOvhConnectionInput
+  | TDevinConnectionInput
+  | TOnaConnectionInput
+  | TDigiCertConnectionInput
+  | TTravisCIConnectionInput
+  | TSnowflakeConnectionInput
+  | TDatadogConnectionInput
 );
 
 export type TSqlConnectionInput =
@@ -471,6 +543,7 @@ export type TCreateAppConnectionDTO = Pick<
   | "description"
   | "isPlatformManagedCredentials"
   | "gatewayId"
+  | "gatewayPoolId"
   | "projectId"
   | "rotation"
   | "isAutoRotationEnabled"
@@ -547,9 +620,18 @@ export type TAppConnectionConfig =
   | TCircleCIConnectionConfig
   | TAzureEntraIdConnectionConfig
   | TVenafiConnectionConfig
+  | TVenafiTppConnectionConfig
   | TExternalInfisicalConnectionConfig
+  | TDopplerConnectionConfig
   | TNetScalerConnectionConfig
-  | TAnthropicConnectionConfig;
+  | TAnthropicConnectionConfig
+  | TOvhConnectionConfig
+  | TDevinConnectionConfig
+  | TOnaConnectionConfig
+  | TDigiCertConnectionConfig
+  | TTravisCIConnectionConfig
+  | TSnowflakeConnectionConfig
+  | TDatadogConnectionConfig;
 
 export type TValidateAppConnectionCredentialsSchema =
   | TValidateAwsConnectionCredentialsSchema
@@ -605,9 +687,18 @@ export type TValidateAppConnectionCredentialsSchema =
   | TValidateCircleCIConnectionCredentialsSchema
   | TValidateAzureEntraIdConnectionCredentialsSchema
   | TValidateVenafiConnectionCredentialsSchema
+  | TValidateVenafiTppConnectionCredentialsSchema
   | TValidateExternalInfisicalConnectionCredentialsSchema
+  | TValidateDopplerConnectionCredentialsSchema
   | TValidateNetScalerConnectionCredentialsSchema
-  | TValidateAnthropicConnectionCredentialsSchema;
+  | TValidateAnthropicConnectionCredentialsSchema
+  | TValidateOvhConnectionCredentialsSchema
+  | TValidateDevinConnectionCredentialsSchema
+  | TValidateOnaConnectionCredentialsSchema
+  | TValidateDigiCertConnectionCredentialsSchema
+  | TValidateTravisCIConnectionCredentialsSchema
+  | TValidateSnowflakeConnectionCredentialsSchema
+  | TValidateDatadogConnectionCredentialsSchema;
 
 export type TListAwsConnectionKmsKeys = {
   connectionId: string;
