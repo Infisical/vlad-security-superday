@@ -138,18 +138,25 @@ export const dynamicSecretLeaseServiceFactory = ({
       if (expireAt > maxExpiryDate) throw new BadRequestError({ message: "TTL cannot be larger than max TTL" });
     }
 
+    // Restrict identity names to characters safe for use as database usernames.
+    // Identity names are free-text and may contain SQL metacharacters (;, --, ', etc.).
+    // Applying this before passing to any provider closes the injection path regardless
+    // of how each provider constructs its creation statement.
+    const toSafeUsername = (raw: string): string =>
+      raw.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 63) || "inf_user";
+
     let result;
     try {
       const identity: { name: string } = { name: "" };
       if (actor === ActorType.USER) {
         const user = await userDAL.findById(actorId);
         if (user) {
-          identity.name = extractEmailUsername(user.username);
+          identity.name = toSafeUsername(extractEmailUsername(user.username));
         }
       } else if (actor === ActorType.Machine) {
         const machineIdentity = await identityDAL.findById(actorId);
         if (machineIdentity) {
-          identity.name = machineIdentity.name;
+          identity.name = toSafeUsername(machineIdentity.name);
         }
       }
       result = await selectedProvider.create({
