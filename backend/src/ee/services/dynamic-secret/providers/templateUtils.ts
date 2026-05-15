@@ -70,10 +70,18 @@ export const compileUsernameTemplate = ({
     }
   };
 
-  const result = hbs.compile(usernameTemplate)(context);
+  const compiled = hbs.compile(usernameTemplate)(context);
+  const result = options?.toUpperCase ? compiled.toUpperCase() : compiled;
 
-  if (options?.toUpperCase) {
-    return result.toUpperCase();
+  // Belt-and-suspenders: reject any compiled username that contains characters
+  // outside the safe set before it reaches a provider's SQL or command template.
+  // This catches any future template additions or helper combinations that could
+  // produce unsafe output even after identity.name is sanitized at the call site.
+  const SAFE_USERNAME_RE = /^[a-zA-Z0-9_\-]{1,128}$/;
+  if (result && !SAFE_USERNAME_RE.test(result)) {
+    throw new Error(
+      `Compiled username contains characters not permitted in database usernames. Allowed: letters, digits, underscore, hyphen. Got: "${result}"`
+    );
   }
 
   return result;
